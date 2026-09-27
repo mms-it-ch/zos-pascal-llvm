@@ -7,17 +7,19 @@
 #     -j N  parallele Tests (Standard 6)
 #     -n    nur Zusammenfassung der vorhandenen Logs
 #     -r    nur die im vorhandenen Log gescheiterten Tests ("Failed ...") wiederholen
+#     -c    abgebrochenen Lauf fortsetzen (erledigte Tests überspringen)
 #
 # Ergebnis: ~/src/fpc/tests/output/s390x-zos/log.<verzeichnis>log (eine Zeile je Test)
 # Referenz für den Vergleich: native x86_64-linux (fpc-testsuite-ref.sh).
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 T=${FPCTESTS:-$HOME/src/fpc/tests}
-J=6; SUMMARY_ONLY=0; RETRY=0
+J=6; SUMMARY_ONLY=0; RETRY=0; CONTINUE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -j) J=$2; shift 2 ;;
     -n) SUMMARY_ONLY=1; shift ;;
     -r) RETRY=1; shift ;;
+    -c) CONTINUE=1; shift ;;
     *) break ;;
   esac
 done
@@ -51,6 +53,17 @@ if [ $SUMMARY_ONLY = 0 ]; then
       grep '^Failed' "$L" | grep -oE "$d/[^ ]*\.(pp|pas)" | sort -u > "$L.retry"
       grep -v -F -f "$L.retry" "$L" > "$L.keep"; mv "$L.keep" "$L"
       cat "$L.retry"
+    elif [ $CONTINUE = 1 ]; then
+      # abgebrochenen Lauf fortsetzen: Logs der dotest-Prozesse übernehmen; als
+      # erledigt gilt ein Test mit einem Eintrag außer "Successfully compiled"
+      # (ein Lauftest kann beim Abbruch nur übersetzt worden sein)
+      for f in "$OUT"/log.[0-9]*; do
+        [ -f "$f" ] && cat "$f" >> "$L" && rm -f "$f"
+      done
+      touch "$L"
+      grep -v '^Successfully compiled' "$L" | grep -oE "$d/[^ ]*\.(pp|pas)" | sort -u > "$L.done"
+      grep -F -f "$L.done" "$L" > "$L.keep"; mv "$L.keep" "$L"
+      ls "$d"/*.pp "$d"/*.pas 2>/dev/null | grep -v -x -F -f "$L.done"
     else
       rm -f "$L" "$OUT/faillist.${d}log" "$OUT/longlog.${d}log"
       ls "$d"/*.pp "$d"/*.pas 2>/dev/null

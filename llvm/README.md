@@ -13,13 +13,14 @@ Eigener Zweig `pascal-zos` (Worktree `~/src/llvm-pascal`) auf dem Zweig `zos-fix
 | 0001 | Temporäre Labels in PR-Sektionen erlauben (DWARF-EH-Tabellen) | upstream `3c478e1` (#222435), Backport |
 | 0002 | GOFF-Sektionen nicht wiederverwenden (eigenes C_WSA64 je Tabelle) | nach #225157 (offen), ohne Header-Änderung |
 | 0003 | LSDA als eigenes SD im WSA (sonst IEW2353E ... 25000E beim Binden) | eigen, auf z/OS getestet |
-| 0004 | ADA auch für Aliase von Funktionen (sonst falsches R5 → S0C4) | eigen, auf z/OS getestet |
+| 0004 | ADA auch für Aliase von Funktionen (sonst falsches R5 → S0C4) | eigen, gemeldet: llvm/llvm-project#226799 |
 | 0005 | Konstanten-Pool immer in die Code-Sektion ("relative immediate relocation section mismatch") | upstream `746d09a` (#222437), Backport |
-| 0006 | Globale Variablen der Größe 0 bekommen 1 Byte (PR-Länge 0 = Referenz → unaufgelöst) | eigen, auf z/OS getestet |
+| 0006 | Globale Variablen der Größe 0 bekommen 1 Byte (PR-Länge 0 = Referenz → unaufgelöst) | eigen, gemeldet: llvm/llvm-project#226800 |
 | 0007 | Lit-Tests an 0003/0004 angepasst (zos-eh, zos-landingpad, zos-func-alias) | eigen |
-| 0008 | Funktionszeiger in statischen Initialisierern: derselbe Deskriptor wie im Code (`VD(f@indirect)` für nicht-interne Funktionen), sonst sind `pf == f` falsch | eigen, auf z/OS getestet (C und Pascal) |
+| 0008 | Funktionszeiger in statischen Initialisierern: derselbe Deskriptor wie im Code (`VD(f@indirect)` für nicht-interne Funktionen), sonst sind `pf == f` falsch | eigen, als Kommentar zu PR llvm/llvm-project#226682 gemeldet |
 
-Kandidaten für upstream (Entscheidung beim Nutzer): 0003, 0004, 0006, 0008.
+Upstream gemeldet (27.09.2026): 0004 → #226799, 0006 → #226800, 0008 → Kommentar zu PR #226682.
+Offen: 0003 (LSDA) – Reproduzierer braucht einen llc mit #222435, aber ohne 0003.
 0008 ergänzt die Basis-Korrektur „function descriptor for external functions in initializers“
 (`cd02b5ee0` auf `zos-fixes`, upstream PR llvm/llvm-project#226682): Seitdem sind Zeiger
 aus Initialisierern aufrufbar, aber für externe Funktionen nicht gleich der im Code
