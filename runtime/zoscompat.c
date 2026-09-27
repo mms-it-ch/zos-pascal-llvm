@@ -5,6 +5,7 @@
  */
 #include <errno.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <sys/time.h>
 
 /* Die Systemzeit kann ein Anwendungsprogramm unter z/OS nicht setzen. */
@@ -33,4 +34,12 @@ int FPC_ZOS_SIGACTION(int sig, const struct sigaction *act, struct sigaction *oa
   if (rc == 0 && oact && (oact->sa_flags & SA_SIGINFO))
     oact->sa_handler = (void (*)(int))oact->sa_sigaction;
   return rc;
+}
+
+/* Umgebung für die RTL (envp). LE ruft main nur mit argc und argv auf; ein
+ * dritter Parameter enthält einen zufälligen Registerwert. environ ist im
+ * ASCII-Modus *__EnvnA() (stdlib.h), die ASCII-Kopie der Umgebung. */
+char **FPC_ZOS_ENVIRON(void)
+{
+  return environ;
 }

@@ -1,0 +1,80 @@
+From e46cb382c3380c05f4530aac1907803f618df256 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 17:02:54 +0200
+Subject: [PATCH 7/8] [SystemZ][z/OS] Update tests for the LSDA section and
+ alias ADA changes
+
+The LSDA is now a section definition of its own in C_WSA64
+(GCC_except.<function>), and function aliases carry the PSECT of the
+ADA.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ llvm/test/CodeGen/SystemZ/zos-eh.ll         | 10 ++++++----
+ llvm/test/CodeGen/SystemZ/zos-func-alias.ll |  5 +++--
+ llvm/test/CodeGen/SystemZ/zos-landingpad.ll | 12 ++++++------
+ 3 files changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/llvm/test/CodeGen/SystemZ/zos-eh.ll b/llvm/test/CodeGen/SystemZ/zos-eh.ll
+index a424de306..7c8bcf535 100644
+--- a/llvm/test/CodeGen/SystemZ/zos-eh.ll
++++ b/llvm/test/CodeGen/SystemZ/zos-eh.ll
+@@ -20,10 +20,12 @@ start:
+ 
+ declare i32 @__zos_cxx_personality_v2(...)
+ 
+-; CHECK:      C_WSA64 CATTR ALIGN(2),FILL(0),NOTEXECUTABLE,RMODE(64),PART(.gcc_excepti
+-; CHECK-NEXT:                ion_table.fn_with_lpad)
+-; CHECK-NEXT: .gcc_exception_table.fn_with_lpad XATTR LINKAGE(XPLINK),REFERENCE(DATA),
+-; CHECK-NEXT:                ,SCOPE(SECTION)
++; The LSDA is a section definition of its own in C_WSA64.
++; CHECK:      GCC_except.fn_with_lpad CSECT
++; CHECK-NEXT: C_WSA64 CATTR ALIGN(3),FILL(0),DEFLOAD,NOTEXECUTABLE,RMODE(64),PART(GCC_
++; CHECK-NEXT:                _except.fn_with_lpad)
++; CHECK-NEXT: GCC_except.fn_with_lpad XATTR LINKAGE(XPLINK),REFERENCE(DATA),SCOPE(SECT
++; CHECK-NEXT:                TION)
+ ; CHECK-NEXT:  DS 0B
+ ; CHECK-NEXT: * @LPStart Encoding = omit
+ ; CHECK-NEXT:  DC XL1'FF'
+diff --git a/llvm/test/CodeGen/SystemZ/zos-func-alias.ll b/llvm/test/CodeGen/SystemZ/zos-func-alias.ll
+index a0c4d3fde..ea28e225a 100644
+--- a/llvm/test/CodeGen/SystemZ/zos-func-alias.ll
++++ b/llvm/test/CodeGen/SystemZ/zos-func-alias.ll
+@@ -5,8 +5,9 @@
+ ; CHECK:      ENTRY foo
+ ; CHECK-NEXT: foo XATTR LINKAGE(XPLINK),REFERENCE(CODE),PSECT(stdin#S),SCOPE(LIBRARY)
+ ; CHECK-NEXT: foo DS 0H
+-; CHECK-NEXT: ENTRY foo
+-; CHECK-NEXT: foo1 XATTR LINKAGE(XPLINK),REFERENCE(CODE),SCOPE(LIBRARY)
++; CHECK-NEXT: ENTRY foo1
++; CHECK-NEXT: foo1 XATTR LINKAGE(XPLINK),REFERENCE(CODE),PSECT(stdin#S),SCOPE(LIBRARY
++; CHECK-NEXT: {{^ +[)]}}
+ ; CHECK-NEXT: foo1 DS 0H
+ 
+ @foo1 = hidden alias i32 (i32), ptr @foo
+diff --git a/llvm/test/CodeGen/SystemZ/zos-landingpad.ll b/llvm/test/CodeGen/SystemZ/zos-landingpad.ll
+index 325337664..599383cd2 100644
+--- a/llvm/test/CodeGen/SystemZ/zos-landingpad.ll
++++ b/llvm/test/CodeGen/SystemZ/zos-landingpad.ll
+@@ -30,12 +30,12 @@ lpad:
+   unreachable
+ }
+ 
+-; Check that the exception table is emitted into .lsda section.
+-; CHECK:  stdin#C CSECT
+-; CHECK: C_WSA64 CATTR ALIGN(2),FILL(0),NOTEXECUTABLE,RMODE(64),PART(.gcc_excepti
+-; CHECK:                ion_table.test1)
+-; CHECK: .gcc_exception_table.test1 XATTR LINKAGE(XPLINK),REFERENCE(DATA),SCOPE(S
+-; CHECK:                SECTION)
++; Check that the exception table is emitted into a section definition of its
++; own in C_WSA64.
++; CHECK: GCC_except.test1 CSECT
++; CHECK: C_WSA64 CATTR ALIGN(3),FILL(0),DEFLOAD,NOTEXECUTABLE,RMODE(64),PART(GCC_
++; CHECK:                _except.test1)
++; CHECK: GCC_except.test1 XATTR LINKAGE(XPLINK),REFERENCE(DATA),SCOPE(SECTION)
+ ; Check that offsets to the FD of the personality routine and LSDA are emitted in PPA1
+ ; CHECK: * PPA1 Flags 4
+ ; CHECK: *   Bit 3: 1 = C++ EH block
+-- 
+2.43.0
+

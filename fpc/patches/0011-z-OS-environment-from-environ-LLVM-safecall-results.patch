@@ -1,0 +1,127 @@
+From 8ba2cd9e34a2f293e7db7e245b8a86eb37353fd4 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 17:03:11 +0200
+Subject: [PATCH 11/11] z/OS: environment from environ; LLVM: safecall results
+
+- rtl/zos: LE calls main with argc and argv only; envp comes from the C
+  library environ (FPC_ZOS_ENVIRON), heaptrc and GetEnvironmentVariable
+  read the environment through it
+- LLVM code generator, safecall wrappers (tf_safecall_exceptions):
+  * no "sret" on the result parameter, the wrapper returns the HRESULT
+  * the HRESULT (ossinttype) determines the value extension of the result
+    in the declaration, not the function result type
+  * extend a smaller HRESULT in a register instead of copying it via
+    memory (wrong half on big endian targets)
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/hlcgllvm.pas | 20 ++++++++++++++++++--
+ compiler/llvm/llvmdef.pas  | 16 +++++++++++++---
+ rtl/zos/system.pp          |  6 +++++-
+ 3 files changed, 36 insertions(+), 6 deletions(-)
+
+diff --git a/compiler/llvm/hlcgllvm.pas b/compiler/llvm/hlcgllvm.pas
+index 94cfe20e..24dc985f 100644
+--- a/compiler/llvm/hlcgllvm.pas
++++ b/compiler/llvm/hlcgllvm.pas
+@@ -636,7 +636,9 @@ implementation
+               parameter }
+             if paraloc^.retvalloc then
+               begin
+-                include(callpara^.flags,lcp_sret);
++                { not for a safecall wrapper, which returns the HRESULT }
++                if not pd.generate_safecall_wrapper then
++                  include(callpara^.flags,lcp_sret);
+               end
+             else
+               begin
+@@ -1949,9 +1951,23 @@ implementation
+   procedure thlcgllvm.gen_load_loc_function_result(list: TAsmList; vardef: tdef; const l: tlocation);
+     var
+       retlocpara: tcgpara;
++      hloc: tlocation;
+     begin
+       retlocpara:=get_call_result_cgpara(current_procinfo.procdef,nil);
+-      gen_load_loc_cgpara(list,vardef,l,retlocpara);
++      { the HRESULT of a safecall wrapper can be smaller than its result
++        location (ossinttype): extend it in a register, a copy via memory
++        would put the value into the wrong half on big endian targets }
++      if current_procinfo.procdef.generate_safecall_wrapper and
++         (vardef.typ in [orddef,enumdef]) and
++         (vardef.size<retlocpara.def.size) then
++        begin
++          location_reset(hloc,LOC_REGISTER,def_cgsize(retlocpara.def));
++          hloc.register:=getintregister(list,retlocpara.def);
++          a_load_loc_reg(list,vardef,retlocpara.def,l,hloc.register);
++          gen_load_loc_cgpara(list,retlocpara.def,hloc,retlocpara);
++        end
++      else
++        gen_load_loc_cgpara(list,vardef,l,retlocpara);
+       retlocpara.resetiftemp;
+     end;
+ 
+diff --git a/compiler/llvm/llvmdef.pas b/compiler/llvm/llvmdef.pas
+index 70c6f633..1aa3a221 100644
+--- a/compiler/llvm/llvmdef.pas
++++ b/compiler/llvm/llvmdef.pas
+@@ -862,10 +862,14 @@ implementation
+ {$endif aarch64}
+               if withattributes then
+                 begin
++                  { a safecall wrapper returns the HRESULT, and "sret" is only
++                    allowed for functions returning void }
+                   if first
+ {$ifdef aarch64}
+                      and not is_managed_type(hp.vardef)
+ {$endif aarch64}
++                     and not ((hp.owner.defowner is tabstractprocdef) and
++                              tabstractprocdef(hp.owner.defowner).generate_safecall_wrapper)
+                     then
+                       encodedstr:=encodedstr+llvmparatypeattr(' sret',hp.vardef,false)+' noalias nocapture'
+                     else
+@@ -989,10 +993,16 @@           (def.returndef.typ=recorddef) and
+            def.generate_safecall_wrapper then
+           begin
+             if not def.generate_safecall_wrapper then
+-              usedef:=llvmgetcgparadef(def.funcretloc[useside],false,useside)
++              begin
++                usedef:=llvmgetcgparadef(def.funcretloc[useside],false,useside);
++                llvmextractvalueextinfo(def.returndef,usedef,signext);
++              end
+             else
+-              usedef:=ossinttype;
+-            llvmextractvalueextinfo(def.returndef,usedef,signext);
++              begin
++                { the wrapper returns the HRESULT, not the function result }
++                usedef:=ossinttype;
++                llvmextractvalueextinfo(ossinttype,usedef,signext);
++              end;
+             { specifying result sign extention information for an alias causes
+               an error for some reason }
+             if pddecltype in [lpd_decl,lpd_def] then
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+index 45e19ef0..2018e93e 100644
+--- a/rtl/zos/system.pp
++++ b/rtl/zos/system.pp
+@@ -57,13 +57,17 @@ implementation
+ 
+ procedure pascalmain;external name 'PASCALMAIN';
+ 
++{ environ of the C library (runtime/zoscompat.c) }
++function zos_environ: PPAnsiChar; cdecl; external name 'FPC_ZOS_ENVIRON';
++
+ { called by the main stub generated by the compiler (C main) }
+ procedure FPC_SYSTEMMAIN(argcparam: Longint; argvparam: PPAnsiChar; envpparam: PPAnsiChar); cdecl; [public];
+ 
+ begin
+   argc:=argcparam;
+   argv:=argvparam;
+-  envp:=envpparam;
++  { LE calls main with argc and argv only, envpparam is undefined }
++  envp:=zos_environ;
+   pascalmain;  {run the pascal main program}
+ end;
+ 
+-- 
+2.43.0
+

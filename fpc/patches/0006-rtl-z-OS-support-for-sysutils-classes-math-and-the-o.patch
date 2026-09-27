@@ -1,7 +1,7 @@
 From ab88195ea75d92df33ae591994979fb5289b0e89 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 14:18:20 +0200
-Subject: [PATCH 06/10] rtl: z/OS support for sysutils, classes, math and the
+Subject: [PATCH 06/11] rtl: z/OS support for sysutils, classes, math and the
  other base units
 
 - objpas: iterate over the resource string pointer lists on z/OS

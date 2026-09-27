@@ -1,7 +1,7 @@
 From d57c6109fbe1fa264332f40606a4f25124be506c Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 13:23:06 +0200
-Subject: [PATCH 2/6] [SystemZ][z/OS] Do not cache section definitions
+Subject: [PATCH 2/8] [SystemZ][z/OS] Do not cache section definitions
 
 If a section was seen before, MCContext::getGOFFSection() returned that
 section for reuse. ED symbols such as C_WSA64 need to be recreated

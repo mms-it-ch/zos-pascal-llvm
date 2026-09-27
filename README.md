@@ -14,7 +14,7 @@ Pascal ──FPC (Port s390x/zos, nur LLVM-Backend)──▶ LLVM-IR ──llc (
 - **RTL:** `rtl/zos` (libc-basiert wie AIX, Werte auf z/OS gemessen) + `rtl/s390x` (ohne Assembler),
   kleine C-Laufzeit des Ports in `runtime/`: eigener XPLINK-Unwinder (`zosunwind.c`) für die
   LLVM-Exceptions, atomare Operationen.
-- **Backend:** eigener LLVM-Zweig (`llvm/`, LLVM 23.1.2 mit z/OS-Korrekturen, +6 Patches).
+- **Backend:** eigener LLVM-Zweig (`llvm/`, LLVM 23.1.2 mit z/OS-Korrekturen, +8 Patches).
 - **Laufzeitmodell:** ASCII-Modus, POSIX(ON), AMODE 64, XPLINK-64, LE. C-Funktionen über die
   ASCII-Einstiege (`zosmap.txt`, aus den z/OS-Headern erzeugt).
 

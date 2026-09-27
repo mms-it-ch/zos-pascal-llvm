@@ -1,7 +1,7 @@
 From 4d678462befa0c8bfa307c056aaf7973e036a744 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 15:01:14 +0200
-Subject: [PATCH 07/10] rtl: z/OS floating point control, signals as
+Subject: [PATCH 07/11] rtl: z/OS floating point control, signals as
  exceptions, more units
 
 - s390x: FPU control word is the FPC register (traps, flags, rounding);

@@ -1,0 +1,93 @@
+From 72f2edf2b21bed19eea4df0e637612f8ab211eb7 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 17:02:54 +0200
+Subject: [PATCH 8/8] [SystemZ][z/OS] Use the same function descriptor in
+ initializers as in code
+
+Code takes the address of a function with external linkage from an ADA
+slot holding a V-con of the indirect symbol <name>@indirect, which the
+binder resolves to the function descriptor of the function. A static
+initializer used a function descriptor of its own in the ADA instead,
+so a function pointer from an initializer did not compare equal to the
+address of the same function taken in code:
+
+  void f(void) {}
+  void (*pf)(void) = f;
+  int main(void) { void (*volatile lf)(void) = f; return lf != pf; }
+
+returned 1 on z/OS. Now the initializer references the indirect symbol
+as well. Internal functions keep the function descriptor in the ADA,
+which is also what code uses for them.
+
+Found with the Free Pascal test suite (method pointers in typed
+constants).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp | 19 +++++++++++++++++--
+ .../CodeGen/SystemZ/zos-lower-constant.ll     | 14 +++++++++-----
+ 2 files changed, 26 insertions(+), 7 deletions(-)
+
+diff --git a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
+index 86957fe65..b115b6c10 100644
+--- a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
++++ b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
+@@ -1860,9 +1860,24 @@ const MCExpr *SystemZAsmPrinter::lowerConstant(const Constant *CV,
+ 
+     if (IsFunc) {
+       OutStreamer->emitSymbolAttribute(Sym, MCSA_ELF_TypeFunction);
++      const GlobalValue *FGV = GA ? static_cast<const GlobalValue *>(GA)
++                                  : static_cast<const GlobalValue *>(FV);
++      if (!FGV->hasInternalLinkage() && !FGV->hasPrivateLinkage()) {
++        // Code takes the address of a non-internal function from an ADA slot
++        // holding a V-con of the indirect symbol, which the binder resolves to
++        // the function descriptor of the function. Use the same descriptor
++        // here, otherwise the function pointer in the initializer would not
++        // compare equal to the address taken in code. The slot is inserted
++        // only to have the indirect symbol defined.
++        ADATable.insert(Sym, SystemZII::MO_ADA_INDIRECT_FUNC_DESC);
++        MCSymbol *Alias = OutContext.getOrCreateSymbol(
++            Twine(Sym->getName()).concat("@indirect"));
++        return MCSpecifierExpr::create(MCSymbolRefExpr::create(Alias, OutContext),
++                                       SystemZ::S_VCon, OutContext);
++      }
+       // A function pointer must point to a function descriptor. Trigger
+-      // creation of a function descriptor in the ADA, for internal and external
+-      // functions alike (a V-con would yield the entry point instead).
++      // creation of a function descriptor in the ADA for internal functions
++      // (a V-con would yield the entry point instead).
+       unsigned Disp = ADATable.insert(Sym, SystemZII::MO_ADA_DIRECT_FUNC_DESC);
+       return MCBinaryExpr::createAdd(
+           MCSpecifierExpr::create(
+diff --git a/llvm/test/CodeGen/SystemZ/zos-lower-constant.ll b/llvm/test/CodeGen/SystemZ/zos-lower-constant.ll
+index 61d465354..b3ccb8e29 100644
+--- a/llvm/test/CodeGen/SystemZ/zos-lower-constant.ll
++++ b/llvm/test/CodeGen/SystemZ/zos-lower-constant.ll
+@@ -2,15 +2,19 @@
+ ;
+ ; RUN: llc < %s -mtriple=s390x-ibm-zos | FileCheck %s
+ 
++; An internal function gets a function descriptor in the ADA. A function
++; with external linkage is referenced through the indirect symbol, like when
++; code takes its address, so that both pointers compare equal.
+ ; CHECK: func_s CSECT
+ ; CHECK: DC AD(AD({{.*}}#S)+XL8'0')
+ ; CHECK: func_e CSECT
+-; CHECK: DC AD(AD({{.*}}#S)+XL8'16')
+-; CHECK: DC RD(foo)
++; CHECK: DC VD(bar@indirect)
++; CHECK: * Offset 0 function descriptor of foo
++; CHECK-NEXT: DC RD(foo)
+ ; CHECK-NEXT: DC VD(foo)
+-; CHECK-NEXT: * Offset 16 function descriptor of bar
+-; CHECK-NEXT: DC RD(bar)
+-; CHECK-NEXT: DC VD(bar)
++; CHECK-NEXT: * Offset 16 pointer to function descriptor bar
++; CHECK-NEXT: DC VD(bar@indirect)
++; CHECK: bar@indirect XATTR LINKAGE(XPLINK),REFERENCE(CODE,INDIRECT)
+ @x = hidden global i32 4077, align 4
+ @y = hidden global ptr @x, align 8
+ @func_s = hidden global ptr @foo, align 8
+-- 
+2.43.0
+

@@ -48,7 +48,7 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   beim Einlesen HOME = Windows-Profil in msys-Form). Upload per tar+sftp (stdin-Pipe über
   ssh.exe verfälscht Binärdaten: pax "checksum error").
 - **LLVM (`llvm/`):** eigener Zweig `pascal-zos` (Worktree `~/src/llvm-pascal`, auf
-  `zos-fixes`: LLVM 23.1.2 + z/OS-Korrekturen), 6 Patches, Details `llvm/README.md`. Build
+  `zos-fixes`: LLVM 23.1.2 + z/OS-Korrekturen), 8 Patches, Details `llvm/README.md`. Build
   `~/build/llvm-pascal` (`ninja llc opt`, cmake/ninja aus `~/opt/bt/bin`), Standard für zos-irc.
   Gefundene LLVM-Fehler: LSDA-Platzierung (IEW2353E 25000E), Aliase ohne ADA (S0C4 bei Aufruf
   über Alias), Globals der Größe 0 (PR-Länge 0 = Referenz → unaufgelöst).
@@ -113,6 +113,14 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   `llvm_ret_inreg` schreibt `inreg` in Deklaration und Aufruf. Test `pf3/cret.pas` (+ `cret_c.c`,
   auch C ruft Pascal). Offen: andere Größen (linksbündig im letzten Register), complex-like in FPRs.
   Betraf `pthread_self` (pthread_t = 8-Byte-Struktur) → falsche Thread-IDs (tb0678).
+- **Umgebung:** LE ruft `main` nur mit argc/argv auf, ein dritter Parameter ist Zufall →
+  `envp` aus `environ` (`FPC_ZOS_ENVIRON`, im ASCII-Modus `*__EnvnA()`); sonst S0C4 in heaptrc.
+- **Funktionszeiger-Gleichheit (LLVM-Patch 0008):** Code nimmt die Adresse externer Funktionen
+  über `VD(f@indirect)` (Deskriptor vom Binder), statische Initialisierer bekamen einen eigenen
+  ADA-Deskriptor → `@f` ≠ Konstante (auch in C). Betraf Methodenzeiger in typisierten Konstanten.
+  Test `pf3/pvconst.pas`, `pf3/fpeq_c.c`.
+- **safecall (FPC-Patch 0011):** allgemeiner Fehler im FPC-LLVM-Pfad: `sret` + HRESULT-Ergebnis,
+  falsche Erweiterung in der Deklaration, HRESULT per Speicher kopiert (Big-Endian: falsche Hälfte).
 
 ## Nächste Schritte
 1. PF3: FPC-Testsuite (`~/src/fpc/tests`) auf z/OS. **tbs (27.09.2026): 772/784 ok, Referenz

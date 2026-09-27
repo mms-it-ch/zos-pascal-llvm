@@ -1,7 +1,7 @@
 From 051afe8fdbe5b271f6002a95daaf18d4e55a6fd0 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 13:34:28 +0200
-Subject: [PATCH 4/6] [SystemZ][z/OS] Emit the ADA for aliases of functions
+Subject: [PATCH 4/8] [SystemZ][z/OS] Emit the ADA for aliases of functions
 
 The LD symbol of a function refers to its ADA, which the binder uses for
 the environment (R5) in function descriptors. The labels emitted for

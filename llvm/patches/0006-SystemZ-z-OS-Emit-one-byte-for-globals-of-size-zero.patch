@@ -1,7 +1,7 @@
 From 7b4e2609a905ba0f8e16168ef3d1ed4b03c4a976 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 14:03:24 +0200
-Subject: [PATCH 6/6] [SystemZ][z/OS] Emit one byte for globals of size zero
+Subject: [PATCH 6/8] [SystemZ][z/OS] Emit one byte for globals of size zero
 
 In GOFF, a part (PR) of length zero is a reference, not a definition, so
 a global of size zero (e.g. an empty record) could not be resolved by
