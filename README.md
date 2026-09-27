@@ -25,7 +25,7 @@ Pascal ──FPC (Port s390x/zos, nur LLVM-Backend)──▶ LLVM-IR ──llc (
 | PF0 | Machbarkeit: FPC→LLVM-IR→GOFF→z/OS | erreicht 27.09.2026 |
 | PF1 | echte `system`-Unit: writeln, Strings, Heap, Textdateien, halt | erreicht 27.09.2026 (`pf1/pf1test.pas`: 17/17) |
 | PF2 | Exceptions (eigener XPLINK-Unwinder), Basis-RTL (sysutils, classes, math, strutils, dateutils, fgl, …) | **erreicht 27.09.2026** (`pf2/`: exctest 7/7, objtest 26/26) |
-| PF3 | FPC-Testsuite auf z/OS | in Arbeit: tbs 772/784, tbf 316/319, webtbf 546/554 (Referenz x86_64: 777, 318, 547) |
+| PF3 | FPC-Testsuite auf z/OS | tbs 772, tbf 317, webtbf 549, test 2025, webtbs 2696 (Referenz x86_64: 777, 318, 547, 2039, 2696) |
 | PF4 | Interop Pascal ↔ C, DLL, Batch/JCL, PDSE | offen |
 
 ## Benutzung (WSL)

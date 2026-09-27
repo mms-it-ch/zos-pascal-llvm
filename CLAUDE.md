@@ -150,8 +150,8 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   -Ct (tw40598). Test-Infrastruktur: %FILES wird nicht hochgeladen (tw37415). Allgemeine FPC-
   Fehler ohne x87 (Currency: tw40550, tw41865g/h bei -O4). Offen: tstack (137), tb0662
   (Testfehler Big-Endian), tw2242 (zu viele Register, FPC-LLVM).
-- **Testsuite-Stand (28.09.2026, nach Wiederholung):** tbs 772/784 (Ref. 777), tbf 317/319
-  (318), webtbf 549/554 (547), test 2016/2073 (2039), webtbs 2688/2765 (2696); vor Patch 0013.
+- **Testsuite-Stand (28.09.2026, nach Patch 0016):** tbs 772/784 (Ref. 777), tbf 317/319
+  (318), webtbf 549/554 (547), test 2025/2073 (2039), webtbs 2696/2765 (2696). Nur z/OS: 41.
 - **safecall (FPC-Patch 0011):** allgemeiner Fehler im FPC-LLVM-Pfad: `sret` + HRESULT-Ergebnis,
   falsche Erweiterung in der Deklaration, HRESULT per Speicher kopiert (Big-Endian: falsche Hälfte).
 
