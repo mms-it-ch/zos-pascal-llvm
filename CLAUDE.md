@@ -133,9 +133,12 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
 - **Atomare Operationen:** direkte C-Helfer (`__atomic_*`); 10 Mio. InterLockedIncrement in
   58 ms (`pf3/atomperf.pas`). tatomicmt/tinterlockedmt: 12 Compare-Exchange-Threads (6 Paare,
   Übergabe per sched_yield) werden in 60 s nicht fertig → Scheduler-/Last-Frage, kein Fehler.
-- Offen (FPC-LLVM allgemein, nicht z/OS): anonyme Funktion + lokale Prozedur auf dieselbe
-  eingefangene Variable (tanonfunc27: Temp der Funktionsreferenz nie beschrieben),
-  `is nested`-Prozedurvariablen (tanonfunc56/60/69).
+- **Anonyme Funktionen + lokale Prozeduren (FPC-Patch 0013):** allgemeiner FPC-LLVM-Fehler: die
+  Capturer-Variable wird erst nach dem Typecheck in die parentfpstruct verschoben, Loads blieben
+  beim alten (nie beschriebenen) Temp → pass_1 leitet nachträglich um (tanonfunc27/56/60/69,
+  tstatementexpr39).
+- **Testsuite-Stand (28.09.2026, nach Wiederholung):** tbs 772/784 (Ref. 777), tbf 317/319
+  (318), webtbf 549/554 (547), test 2016/2073 (2039), webtbs 2688/2765 (2696); vor Patch 0013.
 - **safecall (FPC-Patch 0011):** allgemeiner Fehler im FPC-LLVM-Pfad: `sret` + HRESULT-Ergebnis,
   falsche Erweiterung in der Deklaration, HRESULT per Speicher kopiert (Big-Endian: falsche Hälfte).
 

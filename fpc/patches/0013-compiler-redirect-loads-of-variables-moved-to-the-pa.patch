@@ -1,0 +1,58 @@
+From 304694af378a0b31b41eb12a5006ab1cd631bbfa Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 20:09:03 +0200
+Subject: [PATCH 13/13] compiler: redirect loads of variables moved to the
+ parentfpstruct later
+
+A local variable is moved to the parentfpstruct when a nested routine
+accesses it. Loads are redirected to the struct field in pass_typecheck,
+so a load that was type checked before the move kept using the original
+location, while stores went to the struct. This happens for the capturer
+variable of anonymous functions: it only becomes accessed by nested
+routines when captured variables are converted, after the code creating
+the function reference was type checked. The function reference was then
+loaded from an uninitialised temp (crash, e.g. tanonfunc27, tanonfunc56,
+tanonfunc60, tanonfunc69, tstatementexpr39).
+
+Check again in pass_1 and redirect such loads as well. Only affects
+targets that use the parentfpstruct (LLVM).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/ncgnstld.pas | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/compiler/ncgnstld.pas b/compiler/ncgnstld.pas
+index 2aa1e76f..caaa541a 100644
+--- a/compiler/ncgnstld.pas
++++ b/compiler/ncgnstld.pas
+@@ -154,6 +154,26 @@ implementation
+           paravarsym,
+           localvarsym :
+             begin
++              { The variable may have been moved to the parentfpstruct after
++                this load was type checked (e.g. the capturer variable of
++                anonymous functions, which only becomes accessed by nested
++                routines when captured variables are converted) -> redirect it
++                now, like pass_typecheck does }
++              if not assigned(left) and
++                 not(nf_internal in flags) and
++                 assigned(current_procinfo) and
++                 (symtable.symtabletype in [localsymtable,parasymtable]) and
++                 tabstractnormalvarsym(symtableentry).inparentfpstruct and
++                 (tprocdef(symtable.defowner).parentfpstruct<>symtableentry) then
++                begin
++                  nestsym:=find_sym_in_parentfpstruct(tprocdef(symtableentry.owner.defowner),symtableentry);
++                  if assigned(nestsym) then
++                    begin
++                      left:=caddrnode.create_internal(cloadnode.create(tprocdef(symtableentry.owner.defowner).parentfpstruct,tprocdef(symtableentry.owner.defowner).parentfpstruct.owner));
++                      include(taddrnode(left).addrnodeflags,anf_typedaddr);
++                      typecheckpass(left);
++                    end;
++                end;
+               { Nested variable? Then we have to move it to a structure that
+                 can be passed by reference to nested routines }
+               if assigned(left) and
+-- 
+2.43.0
+
