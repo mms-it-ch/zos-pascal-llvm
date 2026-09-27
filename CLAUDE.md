@@ -137,6 +137,19 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   Capturer-Variable wird erst nach dem Typecheck in die parentfpstruct verschoben, Loads blieben
   beim alten (nie beschriebenen) Temp → pass_1 leitet nachträglich um (tanonfunc27/56/60/69,
   tstatementexpr39).
+- **FPC-Patches 0014-0016 (28.09.2026):** generierter Code (Call-through ohne Unit-Präfix,
+  gültige Redirect-Namen, Interface-Wrapper intern + Aufruf über Typecast auf Elternklasse),
+  Big-Endian (Bitpacked-Int64-Konstanten, SetToArray), Capturer + lokale Prozeduren
+  (Capturer vorab in parentfpstruct, `tcgprocinfo.move_capturer_to_parentfpstruct`), neue
+  Threads übernehmen FPU-Maske (DefaultFPUControlWord), Event-Mutex nicht rekursiv
+  (z/OS: pthread_cond_timedwait scheitert sofort mit rekursivem Mutex).
+- **Verbleibende Fehler, eingeordnet:** Plattform: Inline-Assembler (7), DLL/library (PF4, 7),
+  Lesen über nil (tabsvr6/7, tw9073), fcntl-Sperren prozessweit (tw27998, wie AIX/Solaris),
+  UTF-8-Konsole (twide3/6, tunistr6, tcpstr27), Little-Endian-Annahme (tw41210a), Codegröße
+  zwischen Labels (tw39785), /etc/host* (tw1255), Scheduler (tatomicmt u. a.), Stack-Prüfung
+  -Ct (tw40598). Test-Infrastruktur: %FILES wird nicht hochgeladen (tw37415). Allgemeine FPC-
+  Fehler ohne x87 (Currency: tw40550, tw41865g/h bei -O4). Offen: tstack (137), tb0662
+  (Testfehler Big-Endian), tw2242 (zu viele Register, FPC-LLVM).
 - **Testsuite-Stand (28.09.2026, nach Wiederholung):** tbs 772/784 (Ref. 777), tbf 317/319
   (318), webtbf 549/554 (547), test 2016/2073 (2039), webtbs 2688/2765 (2696); vor Patch 0013.
 - **safecall (FPC-Patch 0011):** allgemeiner Fehler im FPC-LLVM-Pfad: `sret` + HRESULT-Ergebnis,

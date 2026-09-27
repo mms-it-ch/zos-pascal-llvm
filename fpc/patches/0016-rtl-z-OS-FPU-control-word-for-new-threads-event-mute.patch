@@ -1,0 +1,94 @@
+From d21be5b9c2bacb2102b44f777261a5aa3c149573 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 20:41:30 +0200
+Subject: [PATCH 16/16] rtl: z/OS FPU control word for new threads, event
+ mutex; big endian SetToArray
+
+- s390x: SetNativeFPUControlWord updates DefaultFPUControlWord and
+  SysResetFPU applies it, so new threads get the exception mask set with
+  SetExceptionMask (tw38230)
+- cthreads, z/OS: the mutex of basic events is not recursive,
+  pthread_cond_timedwait fails immediately with a recursive mutex on z/OS
+  and the wait loop never ended (tbrtlevt)
+- typinfo: SetToArray(TypeInfo, LongInt) adjusts packed sets smaller than
+  32 bits on big endian targets, like SetToString (trtti24)
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/objpas/typinfo.pp | 8 ++++++++
+ rtl/s390x/s390x.inc   | 8 +++++++-
+ rtl/unix/cthreads.pp  | 6 ++++++
+ 3 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/rtl/objpas/typinfo.pp b/rtl/objpas/typinfo.pp
+index b67c26ac..12c630a4 100644
+--- a/rtl/objpas/typinfo.pp
++++ b/rtl/objpas/typinfo.pp
+@@ -1629,6 +1629,14 @@ function SetToArray(PropInfo: PPropInfo; Value: Pointer) : TBytes;
+ 
+ function SetToArray(TypeInfo: PTypeInfo; Value: LongInt) : TBytes;
+ begin
++{$if defined(FPC_BIG_ENDIAN)}
++  { correctly adjust packed sets that are smaller than 32-bit (as in
++    SetToString) }
++  case GetTypeData(TypeInfo)^.OrdType of
++    otSByte,otUByte: Value := Value shl (SizeOf(Integer)*8-8);
++    otSWord,otUWord: Value := Value shl (SizeOf(Integer)*8-16);
++  end;
++{$endif}
+   Result:=SetToArray(TypeInfo,@Value);
+ end;
+ 
+diff --git a/rtl/s390x/s390x.inc b/rtl/s390x/s390x.inc
+index 2de98df8..60b6d99a 100644
+--- a/rtl/s390x/s390x.inc
++++ b/rtl/s390x/s390x.inc
+@@ -36,6 +36,10 @@ function GetNativeFPUControlWord: TNativeFPUControlWord;{$ifdef SYSTEMINLINE}inl
+ procedure SetNativeFPUControlWord(const cw: TNativeFPUControlWord);{$ifdef SYSTEMINLINE}inline;{$endif}
+   begin
+     zos_set_fpc(cw);
++    { new threads start with this control word (SysResetFPU), like on the
++      other targets; without the exception flags and the data exception
++      code }
++    DefaultFPUControlWord:=cw and not (fpc_flag_mask or fpc_dxc_mask);
+   end;
+ 
+ 
+@@ -56,7 +60,9 @@ procedure SysInitFPU;
+ procedure SysResetFPU;{$ifdef SYSTEMINLINE}inline;{$endif}
+   begin
+     softfloat_exception_flags:=[];
+-    zos_set_fpc(zos_get_fpc and not (fpc_flag_mask or fpc_dxc_mask));
++    { DefaultFPUControlWord is set in fpc_cpuinit (after SysInitFPU) and by
++      SetNativeFPUControlWord }
++    zos_set_fpc(DefaultFPUControlWord and not (fpc_flag_mask or fpc_dxc_mask));
+   end;
+ 
+ 
+diff --git a/rtl/unix/cthreads.pp b/rtl/unix/cthreads.pp
+index f8cd2305..3a915633 100644
+--- a/rtl/unix/cthreads.pp
++++ b/rtl/unix/cthreads.pp
+@@ -768,6 +768,11 @@ function IntBasicEventCreate(EventAttributes : Pointer; AManualReset,InitialStat
+   end;
+ {$ifend}
+ 
++{$ifdef zos}
++  { z/OS: pthread_cond_(timed)wait fails immediately with a recursive mutex
++    (POSIX leaves this undefined), so the wait loop would never end }
++  res:=pthread_mutex_init(@plocaleventstate(result)^.feventsection,nil);
++{$else zos}
+   res:=pthread_mutexattr_init(@MAttr);
+   if res=0 then
+     begin
+@@ -781,6 +786,7 @@ function IntBasicEventCreate(EventAttributes : Pointer; AManualReset,InitialStat
+     res:=pthread_mutex_init(@plocaleventstate(result)^.feventsection,nil);
+ 
+   pthread_mutexattr_destroy(@MAttr);
++{$endif zos}
+   if res <> 0 then
+     begin
+       pthread_cond_destroy(@plocaleventstate(result)^.FCondVar);
+-- 
+2.43.0
+
