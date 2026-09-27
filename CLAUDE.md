@@ -146,10 +146,14 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
 - **Verbleibende Fehler, eingeordnet:** Plattform: Inline-Assembler (7), DLL/library (PF4, 7),
   Lesen über nil (tabsvr6/7, tw9073), fcntl-Sperren prozessweit (tw27998, wie AIX/Solaris),
   UTF-8-Konsole (twide3/6, tunistr6, tcpstr27), Little-Endian-Annahme (tw41210a), Codegröße
-  zwischen Labels (tw39785), /etc/host* (tw1255), Scheduler (tatomicmt u. a.), Stack-Prüfung
-  -Ct (tw40598). Test-Infrastruktur: %FILES wird nicht hochgeladen (tw37415). Allgemeine FPC-
-  Fehler ohne x87 (Currency: tw40550, tw41865g/h bei -O4). Offen: tstack (137), tb0662
-  (Testfehler Big-Endian), tw2242 (zu viele Register, FPC-LLVM).
+  zwischen Labels (tw39785, tw38267b), /etc/host* (tw1255), Scheduler (tatomicmt u. a.),
+  Stack-Prüfung {$S+}/-Ct nicht umgesetzt (tw40598, tstack: LE vergrößert den Stack bis zum
+  CPU-Limit), Testfehler Big-Endian (tb0662: @Integer als PSizeInt). Allgemeine FPC-Fehler
+  ohne x87 (Currency: tw40550, tw41865g/h bei -O4). FPC-LLVM-Grenze: tsuperregister 16 Bit,
+  eine Prozedur mit ~13000 Zeilen braucht mehr virtuelle Register (tw2242).
+- **FPC-Patch 0017 / Skripte (28.09.2026):** `-k`-Optionen gehen über zos-ld an ld (testlderror);
+  `%FILES` der Tests: fpc-testsuite.sh setzt `ZOS_RUN_FILES`, das Startskript lädt die Dateien
+  per sftp ins Laufverzeichnis (tw37415).
 - **Testsuite-Stand (28.09.2026, nach Patch 0016):** tbs 772/784 (Ref. 777), tbf 317/319
   (318), webtbf 549/554 (547), test 2025/2073 (2039), webtbs 2696/2765 (2696). Nur z/OS: 41.
 - **safecall (FPC-Patch 0011):** allgemeiner Fehler im FPC-LLVM-Pfad: `sret` + HRESULT-Ergebnis,

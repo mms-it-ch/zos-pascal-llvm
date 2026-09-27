@@ -68,8 +68,10 @@ if [ $SUMMARY_ONLY = 0 ]; then
       rm -f "$L" "$OUT/faillist.${d}log" "$OUT/longlog.${d}log"
       ls "$d"/*.pp "$d"/*.pas 2>/dev/null
     fi | sort |
-      # -L: eigene Hilfsdateien je dotest-Prozess (sonst Wettlauf um out.)
-      xargs -P "$J" -n 1 "$T/utils/dotest" -L -C"$REPO/scripts/zfpc" -Tzos -E -Z
+      # -L: eigene Hilfsdateien je dotest-Prozess (sonst Wettlauf um out.);
+      # ZOS_RUN_FILES: %FILES des Tests, das Startskript lädt sie auf z/OS hoch
+      # (sh -c: $0 = dotest, $1 = zfpc, $2 = Test von xargs)
+      xargs -P "$J" -n 1 sh -c 'ZOS_RUN_FILES=$(sed -n "s/.*{ *%FILES=\([^}]*\)}.*/\1/Ip" "$2" | head -1) exec "$0" -L -C"$1" -Tzos -E -Z "$2"' "$T/utils/dotest" "$REPO/scripts/zfpc"
     # dotest -L schreibt log.<pid>, faillist.<pid>, longlog.<pid> -> zusammenführen
     for k in log faillist longlog; do
       for f in "$OUT"/$k.[0-9]*; do

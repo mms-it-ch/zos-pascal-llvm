@@ -1,7 +1,7 @@
 #!/bin/sh
 # zos-ld: "Linker" für das FPC-Target zos (wird von t_zos aufgerufen).
 #
-#   zos-ld exe|dll <ausgabe> <bindeliste>
+#   zos-ld exe|dll <ausgabe> <bindeliste> [Optionen für ld, von FPC -k...]
 #
 # Die Bindeliste (<prog>.zlink, von FPC geschrieben) enthält Zeilen
 #   obj <objektdatei>   lib <archiv>   clib <name>   dll
@@ -17,7 +17,10 @@
 # Läuft in WSL; benutzt ssh.exe/sftp.exe (Git für Windows), weil der Schlüssel dort liegt.
 set -e
 KIND=$1; OUT=$2; LIST=$3
-[ -n "$LIST" ] || { echo "usage: zos-ld exe|dll <output> <linklist>" >&2; exit 2; }
+[ -n "$LIST" ] || { echo "usage: zos-ld exe|dll <output> <linklist> [ld-options]" >&2; exit 2; }
+shift 3
+# weitere Argumente (FPC: -k...) gehen unverändert an ld
+LDOPTS="$*"
 
 SELF=$(readlink -f "$0")
 ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
@@ -84,7 +87,7 @@ if [ "\$free" -lt ${ZOS_MIN_FREE_KB:-61440} ]; then
 fi
 pax -rf objs.tar
 ld -b AMODE=64 -b CASE=MIXED -b DYNAM=DLL -b REUS=RENT -b MAP \
-   -e CELQSTRT -V -o $DIR/$NAME $objs $libs \
+   -e CELQSTRT -V $LDOPTS -o $DIR/$NAME $objs $libs \
    -S "//'$LE.SCEEBND2'" \
    "//'$LE.SCEELIB(CELQS001)'" "//'$LE.SCEELIB(CELQS003)'" > $DIR/$NAME.map 2>&1
 rc=\$?
@@ -111,6 +114,14 @@ R=\$ZOS_DIR/run/$NAME.\$\$
 # Arbeitsverzeichnis (auch CEEDUMPs) wird nach dem Lauf gelöscht;
 # ZOS_RUN_ONCE=1 löscht auch das Programm (Testsuite)
 ONCE=""; [ "\$ZOS_RUN_ONCE" = 1 ] && ONCE="rm -f \$ZOS_DIR/$NAME;"
+# ZOS_RUN_FILES: Dateien aus dem Verzeichnis dieses Skripts vorher ins Arbeitsverzeichnis
+# laden (Testsuite: %FILES, die dotest neben das Programm kopiert)
+if [ -n "\$ZOS_RUN_FILES" ]; then
+  D=\$(cd "\$(dirname "\$0")" && pwd)
+  { echo "-mkdir \$ZOS_DIR/run"; echo "mkdir \$R"
+    for f in \$ZOS_RUN_FILES; do [ -f "\$D/\$f" ] && echo "put \$(wslpath -m "\$D/\$f") \$R/\$f"; done
+  } | ${SFTP} -q -i "\$ZOS_KEY" -o BatchMode=yes -b - "\$ZOS_HOST" >/dev/null
+fi
 exec ${SSH} -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
 EOF
 chmod +x "$OUT"

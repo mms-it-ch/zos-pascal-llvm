@@ -1,7 +1,7 @@
 From d79fc988201cda9d016a3656b0d2b8e53de2c75b Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 13:35:24 +0200
-Subject: [PATCH 04/16] rtl: add the z/OS port (s390x, LLVM code generator
+Subject: [PATCH 04/17] rtl: add the z/OS port (s390x, LLVM code generator
  only)
 
 rtl/zos: libc based like AIX; all operating system services come from the

@@ -1,0 +1,42 @@
+From 7f8f11a361ae35598546c93645b063ffa195368c Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 20:50:11 +0200
+Subject: [PATCH 17/17] compiler/zos: pass linker options (-k) to zos-ld
+
+The external linker tool gets Info.ExtraOptions (), which it passes on
+to the z/OS binder (ld), so that e.g. an invalid option makes linking fail
+as expected (testlderror).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/systems/t_zos.pas | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/compiler/systems/t_zos.pas b/compiler/systems/t_zos.pas
+index 6481bddc..7067f64b 100644
+--- a/compiler/systems/t_zos.pas
++++ b/compiler/systems/t_zos.pas
+@@ -86,9 +86,9 @@ implementation
+       begin
+         with Info do
+           begin
+-            { zos-ld <kind> <output> <link list> }
+-            ExeCmd[1]:='zos-ld exe $EXE $RES';
+-            DllCmd[1]:='zos-ld dll $EXE $RES';
++            { zos-ld <kind> <output> <link list> [options for ld (-k)] }
++            ExeCmd[1]:='zos-ld exe $EXE $RES $OPT';
++            DllCmd[1]:='zos-ld dll $EXE $RES $OPT';
+             ResName:='link.zlink';
+           end;
+       end;
+@@ -150,6 +150,7 @@ implementation
+           SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
+         Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
+         Replace(cmdstr,'$RES',maybequoted(resname));
++        Replace(cmdstr,'$OPT',Info.ExtraOptions);
+         binstr:=FindUtil(utilsprefix+binstr);
+         result:=DoExec(binstr,cmdstr,true,false);
+       end;
+-- 
+2.43.0
+
