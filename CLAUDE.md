@@ -119,6 +119,23 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   über `VD(f@indirect)` (Deskriptor vom Binder), statische Initialisierer bekamen einen eigenen
   ADA-Deskriptor → `@f` ≠ Konstante (auch in C). Betraf Methodenzeiger in typisierten Konstanten.
   Test `pf3/pvconst.pas`, `pf3/fpeq_c.c`.
+- **Nicht-lokales goto / setjmp (FPC-Patch 0012):** `fpc_setjmp`/`fpc_longjmp` und die
+  öffentlichen `setjmp`/`longjmp` sind die der C-Bibliothek (`jmp_buf` = long[128]); der Name
+  `setjmp` lässt agllvm `returns_twice` setzen. tisogoto*, tmacnonlocal*, tintuint laufen.
+- **Resourcestrings in typisierten Konstanten (FPC-Patch 0012):** allgemeiner FPC-LLVM-Fehler
+  mit opaken Zeigern: Zeiger→Zeiger-Umwandlung wurde weggelassen, das GEP nahm den Typ der
+  Variablen (`[2 x ptr]`) statt `[n x i8]` → Byte-Offset als Elementindex (tstring3).
+- **Codepages/iconv:** z/OS-iconv kennt Windows-Codepages nur als CCSID (1252/1253 ohne Euro,
+  mit Euro 5346..5354 = cp+4096), UTF-16 = 1200, UTF-32 = 1232, kein `//TRANSLIT`. cwstring
+  angepasst (`pf3/cptest.pas`, `pf3/iconv_c.c`). **Systemcodepage im ASCII-Modus immer
+  ISO-8859-1 (28591)**, auch mit UTF-8-Locale (LANG wird für 64-Bit-ASCII abgelehnt) → Tests,
+  die eine UTF-8-Konsole voraussetzen (Referenz läuft mit C.UTF-8), sind Plattformunterschiede.
+- **Atomare Operationen:** direkte C-Helfer (`__atomic_*`); 10 Mio. InterLockedIncrement in
+  58 ms (`pf3/atomperf.pas`). tatomicmt/tinterlockedmt: 12 Compare-Exchange-Threads (6 Paare,
+  Übergabe per sched_yield) werden in 60 s nicht fertig → Scheduler-/Last-Frage, kein Fehler.
+- Offen (FPC-LLVM allgemein, nicht z/OS): anonyme Funktion + lokale Prozedur auf dieselbe
+  eingefangene Variable (tanonfunc27: Temp der Funktionsreferenz nie beschrieben),
+  `is nested`-Prozedurvariablen (tanonfunc56/60/69).
 - **safecall (FPC-Patch 0011):** allgemeiner Fehler im FPC-LLVM-Pfad: `sret` + HRESULT-Ergebnis,
   falsche Erweiterung in der Deklaration, HRESULT per Speicher kopiert (Big-Endian: falsche Hälfte).
 

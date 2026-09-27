@@ -1,0 +1,280 @@
+From 11d7da677ca05a6acf7b756bc602c3c2e30e989f Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 20:02:43 +0200
+Subject: [PATCH 12/12] z/OS: setjmp/longjmp, direct atomics, iconv names;
+ LLVM: typed const GEP
+
+- rtl/s390x, z/OS: fpc_setjmp/fpc_longjmp and setjmp/longjmp are the
+  functions of the C library (non-local goto, ISO mode); the name
+  "setjmp" makes the LLVM code generator mark the calls returns_twice
+- rtl/s390x: atomic inc/dec/add/sub/xchg call C helpers directly instead
+  of compare-and-swap loops
+- cwstring, z/OS: UTF-16/UTF-32 are CCSIDs 1200/1232, no //TRANSLIT,
+  code pages that iconv only knows by number are opened as CCSID
+  (Windows 1250..1258 as the euro versions 5346..5354)
+- LLVM typed constants: keep a pointer to pointer conversion if the
+  pointed-to types differ, a getelementptr applied to it takes its source
+  element type from it (RESSTRINITS entries indexed the variable instead
+  of its bytes: wrong addresses for all but the first entry)
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/nllvmtcon.pas | 10 ++++-
+ rtl/inc/compproc.inc        |  8 ++++
+ rtl/s390x/s390x.inc         | 75 +++++++++++++++++++++++++++++++++++++
+ rtl/s390x/setjump.inc       | 18 ++-------
+ rtl/s390x/setjumph.inc      |  9 +++--
+ rtl/unix/cwstring.pp        | 29 +++++++++++++-
+ 6 files changed, 129 insertions(+), 20 deletions(-)
+
+diff --git a/compiler/llvm/nllvmtcon.pas b/compiler/llvm/nllvmtcon.pas
+index e62bced0..234da74f 100644
+--- a/compiler/llvm/nllvmtcon.pas
++++ b/compiler/llvm/nllvmtcon.pas
+@@ -760,9 +760,17 @@ implementation
+       secondop: tllvmop;
+     begin
+       inherited;
++      { with opaque pointers, a pointer to pointer conversion is a no-op,
++        except that the type of the result can matter: a getelementptr
++        applied to it takes its source element type from it (e.g. indexing
++        a variable as an array of bytes in the RESSTRINITS tables) }
+       if (llvmflag_opaque_ptr in llvmversion_properties[current_settings.llvmversion]) and
+          is_address(fromdef) and
+-         is_address(todef) then
++         is_address(todef) and
++         not((fromdef.typ=pointerdef) and
++             (todef.typ=pointerdef) and
++             (llvmencodetypename(tpointerdef(fromdef).pointeddef)<>
++              llvmencodetypename(tpointerdef(todef).pointeddef))) then
+         exit;
+       { special case: procdef -> procvardef/pointerdef: must take address of
+         the procdef }
+diff --git a/rtl/inc/compproc.inc b/rtl/inc/compproc.inc
+index 6d8d371d..93552c42 100644
+--- a/rtl/inc/compproc.inc
++++ b/rtl/inc/compproc.inc
+@@ -858,8 +858,16 @@ function fpc_qword_to_double(q: qword): double; compilerproc;
+ function fpc_longword_to_double(i: longword): double; compilerproc;
+ {$endif FPC_INCLUDE_SOFTWARE_LONGWORD_TO_DOUBLE}
+ 
++{$if defined(cpus390x) and defined(zos)}
++{ z/OS: setjmp/longjmp of the C library (a setjmp cannot be a Pascal routine
++  that returns before the longjmp); the name "setjmp" makes the LLVM code
++  generator mark the calls returns_twice }
++function fpc_setjmp(var s : jmp_buf) : longint; compilerproc; cdecl; external name 'setjmp';
++procedure fpc_longjmp(var s : jmp_buf; value : longint); compilerproc; cdecl; external name 'longjmp';
++{$else}
+ function fpc_setjmp(var s : jmp_buf) : {$if defined(CPUINT8)}shortint{$elseif defined(CPUINT16)}smallint{$else}longint{$endif}; compilerproc;
+ procedure fpc_longjmp(var s : jmp_buf; value : {$if defined(CPUINT8)}shortint{$elseif defined(CPUINT16)}smallint{$else}longint{$endif}); compilerproc;
++{$endif}
+ 
+ {$ifdef cpui8086}
+ { i8086 stack checking }
+diff --git a/rtl/s390x/s390x.inc b/rtl/s390x/s390x.inc
+index c7d40aad..2de98df8 100644
+--- a/rtl/s390x/s390x.inc
++++ b/rtl/s390x/s390x.inc
+@@ -82,6 +82,81 @@ function fpc_atomic_cmp_xchg_64(var Target: int64; NewValue: int64; Comparand: i
+     result:=c_atomic_cmp_xchg_64(Target,NewValue,Comparand);
+   end;
+ 
++{ direct atomic operations (runtime/zosatomic.c) instead of the generic
++  compare-and-swap loops, which call c_atomic_cmp_xchg once per attempt;
++  inc/dec return the new value, add/sub/xchg the old one }
++function c_atomic_inc_32(var Target: longint): longint; cdecl; external name 'FPC_ATOMIC_INC_32';
++function c_atomic_dec_32(var Target: longint): longint; cdecl; external name 'FPC_ATOMIC_DEC_32';
++function c_atomic_add_32(var Target: longint; Value: longint): longint; cdecl; external name 'FPC_ATOMIC_ADD_32';
++function c_atomic_sub_32(var Target: longint; Value: longint): longint; cdecl; external name 'FPC_ATOMIC_SUB_32';
++function c_atomic_xchg_32(var Target: longint; Source: longint): longint; cdecl; external name 'FPC_ATOMIC_XCHG_32';
++
++{$define FPC_SYSTEM_HAS_ATOMIC_INC_32}
++function fpc_atomic_inc_32(var Target: longint): longint; compilerproc;
++  begin
++    result:=c_atomic_inc_32(Target);
++  end;
++
++{$define FPC_SYSTEM_HAS_ATOMIC_DEC_32}
++function fpc_atomic_dec_32(var Target: longint): longint; compilerproc;
++  begin
++    result:=c_atomic_dec_32(Target);
++  end;
++
++{$define FPC_SYSTEM_HAS_ATOMIC_ADD_32}
++function fpc_atomic_add_32(var Target: longint; Value: longint): longint; compilerproc;
++  begin
++    result:=c_atomic_add_32(Target,Value);
++  end;
++
++{$define FPC_SYSTEM_HAS_ATOMIC_SUB_32}
++function fpc_atomic_sub_32(var Target: longint; Value: longint): longint; compilerproc;
++  begin
++    result:=c_atomic_sub_32(Target,Value);
++  end;
++
++{$define FPC_SYSTEM_HAS_ATOMIC_XCHG_32}
++function fpc_atomic_xchg_32(var Target: longint; Source: longint): longint; compilerproc;
++  begin
++    result:=c_atomic_xchg_32(Target,Source);
++  end;
++
++function c_atomic_inc_64(var Target: int64): int64; cdecl; external name 'FPC_ATOMIC_INC_64';
++function c_atomic_dec_64(var Target: int64): int64; cdecl; external name 'FPC_ATOMIC_DEC_64';
++function c_atomic_add_64(var Target: int64; Value: int64): int64; cdecl; external name 'FPC_ATOMIC_ADD_64';
++function c_atomic_sub_64(var Target: int64; Value: int64): int64; cdecl; external name 'FPC_ATOMIC_SUB_64';
++function c_atomic_xchg_64(var Target: int64; Source: int64): int64; cdecl; external name 'FPC_ATOMIC_XCHG_64';
++
++{$define FPC_SYSTEM_HAS_ATOMIC_INC_64}
++function fpc_atomic_inc_64(var Target: int64): int64; compilerproc;
++  begin
++    result:=c_atomic_inc_64(Target);
++  end;
++
++{$define FPC_SYSTEM_HAS_ATOMIC_DEC_64}
++function fpc_atomic_dec_64(var Target: int64): int64; compilerproc;
++  begin
++    result:=c_atomic_dec_64(Target);
++  end;
++
++{$define FPC_SYSTEM_HAS_ATOMIC_ADD_64}
++function fpc_atomic_add_64(var Target: int64; Value: int64): int64; compilerproc;
++  begin
++    result:=c_atomic_add_64(Target,Value);
++  end;
++
++{$define FPC_SYSTEM_HAS_ATOMIC_SUB_64}
++function fpc_atomic_sub_64(var Target: int64; Value: int64): int64; compilerproc;
++  begin
++    result:=c_atomic_sub_64(Target,Value);
++  end;
++
++{$define FPC_SYSTEM_HAS_ATOMIC_XCHG_64}
++function fpc_atomic_xchg_64(var Target: int64; Source: int64): int64; compilerproc;
++  begin
++    result:=c_atomic_xchg_64(Target,Source);
++  end;
++
+ 
+ {****************************************************************************
+                        Caller/StackFrame Helpers
+diff --git a/rtl/s390x/setjump.inc b/rtl/s390x/setjump.inc
+index ce738029..f1ea675c 100644
+--- a/rtl/s390x/setjump.inc
++++ b/rtl/s390x/setjump.inc
+@@ -4,9 +4,8 @@
+ 
+     SetJmp/Longjmp for s390x
+ 
+-    Exceptions use the LLVM (landing pad) model on s390x, so these compiler
+-    helpers are never called. A setjmp cannot be implemented in Pascal
+-    without assembler (the helper would return before the longjmp).
++    Exceptions use the LLVM (landing pad) model on s390x; setjmp/longjmp
++    are still needed for non-local goto (e.g. in ISO mode).
+ 
+     See the file COPYING.FPC, included in this distribution,
+     for details about the copyright.
+@@ -17,14 +16,5 @@
+ 
+  **********************************************************************}
+ 
+-function fpc_setjmp(var S : jmp_buf) : longint;[Public, alias : 'FPC_SETJMP'];compilerproc;
+-  begin
+-    result:=0;
+-  end;
+-
+-
+-procedure fpc_longjmp(var S : jmp_buf;value : longint);[Public, alias : 'FPC_LONGJMP'];compilerproc;
+-  begin
+-    { not supported on s390x }
+-    halt(217);
+-  end;
++{ z/OS: fpc_setjmp and fpc_longjmp are the setjmp and longjmp of the C
++  library, declared in compproc.inc }
+diff --git a/rtl/s390x/setjumph.inc b/rtl/s390x/setjumph.inc
+index 74753a82..f7b1a0d9 100644
+--- a/rtl/s390x/setjumph.inc
++++ b/rtl/s390x/setjumph.inc
+@@ -4,9 +4,8 @@
+ 
+     SetJmp/Longjmp declarations for s390x
+ 
+-    Exceptions use the LLVM (landing pad) model on s390x, so FPC's own
+-    setjmp/longjmp is not used. The type is required by the compiler and
+-    has the size of the C jmp_buf on z/OS.
++    jmp_buf of the C library on z/OS (long[128]); fpc_setjmp/fpc_longjmp
++    are setjmp/longjmp of the C library (see compproc.inc).
+ 
+     See the file COPYING.FPC, included in this distribution,
+     for details about the copyright.
+@@ -22,3 +21,7 @@   jmp_buf = record
+     data: array[0..127] of qword;
+   end;
+   pjmp_buf = ^jmp_buf;
++
++{ the setjmp/longjmp of the C library, also used for fpc_setjmp/fpc_longjmp }
++function setjmp(var S : jmp_buf) : longint; cdecl; external name 'setjmp';
++procedure longjmp(var S : jmp_buf;value : longint); cdecl; external name 'longjmp';
+diff --git a/rtl/unix/cwstring.pp b/rtl/unix/cwstring.pp
+index ab390095..f47e04bf 100644
+--- a/rtl/unix/cwstring.pp
++++ b/rtl/unix/cwstring.pp
+@@ -194,6 +194,11 @@ function mblen(const s: PAnsiChar; n: size_t): size_t; cdecl; external clib name
+ {$else  FPC_LITTLE_ENDIAN}
+ {$ifdef AIX}
+   unicode_encoding2 = 'UTF-16';
++{$elseif defined(zos)}
++  { z/OS iconv knows these as CCSIDs only: 1200 = UTF-16 big endian,
++    1232 = UTF-32 big endian }
++  unicode_encoding2 = '1200';
++  unicode_encoding4 = '1232';
+ {$else AIX}
+   unicode_encoding2 = 'UTF-16BE';
+   unicode_encoding4 = 'UCS-4BE';
+@@ -284,7 +289,8 @@ procedure InitThread;
+   iconvname:='UTF-8';
+ {$endif}
+   toencoding:=iconvname;
+-  if not assigned(iconvctl) then
++  { z/OS iconv does not know //TRANSLIT (iconv_open fails) }
++  if not assigned(iconvctl) {$ifdef zos}and false{$endif} then
+     toencoding:=toencoding+TransLitName+#0
+   else
+     toencoding:=toencoding+#0;
+@@ -348,7 +354,8 @@ function open_iconv_for_cps(cp: TSystemCodePage; const otherencoding: PAnsiChar;
+       else
+       begin
+         toencoding:=UnixCpMap[iconvindex].name;
+-        if not assigned(iconvctl) then
++        { z/OS iconv does not know //TRANSLIT (iconv_open fails) }
++        if not assigned(iconvctl) {$ifdef zos}and false{$endif} then
+           toencoding:=toencoding+'//TRANSLIT';
+         open_iconv_for_cps:=iconv_open(PAnsiChar(toencoding),otherencoding);
+       end;
+@@ -356,6 +363,24 @@ function open_iconv_for_cps(cp: TSystemCodePage; const otherencoding: PAnsiChar;
+     until (open_iconv_for_cps<>iconv_t(-1)) or
+           (iconvindex>high(UnixCpMap)) or
+           (UnixCpMap[iconvindex].cp<>cp);
++{$ifdef zos}
++    { z/OS iconv knows many code pages only by their CCSID, which is the
++      code page number; for the Windows code pages 1250..1258 the CCSIDs
++      1250..1258 are the versions without the euro sign, the current ones
++      are 5346..5354 }
++    if open_iconv_for_cps=iconv_t(-1) then
++      begin
++        if (cp>=1250) and (cp<=1258) then
++          str(cp+4096,toencoding)
++        else
++          str(cp,toencoding);
++        toencoding:=toencoding+#0;
++        if cp_is_from then
++          open_iconv_for_cps:=iconv_open(otherencoding,PAnsiChar(toencoding))
++        else
++          open_iconv_for_cps:=iconv_open(PAnsiChar(toencoding),otherencoding);
++      end;
++{$endif zos}
+     if not cp_is_from and
+       (open_iconv_for_cps<>iconv_t(-1)) and
+       assigned(iconvctl) then
+-- 
+2.43.0
+
