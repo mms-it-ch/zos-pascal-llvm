@@ -1,0 +1,407 @@
+From 4d678462befa0c8bfa307c056aaf7973e036a744 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 15:01:14 +0200
+Subject: [PATCH 07/10] rtl: z/OS floating point control, signals as
+ exceptions, more units
+
+- s390x: FPU control word is the FPC register (traps, flags, rounding);
+  SysInitFPU enables the invalid, zero-divide and overflow traps
+- z/OS: sigaction goes through FPC_ZOS_SIGACTION (sa_handler and
+  sa_sigaction are separate fields); the signal handler redirects the
+  machine context to HandleErrorAddrFrame (FPC_ZOS_SIGREDIRECT)
+- cwstring, cthreads build for z/OS
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/s390x/cpuh.inc    |  21 +++++++-
+ rtl/s390x/mathu.inc   | 111 ++++++++++++++++++++++++++++++++----------
+ rtl/s390x/s390x.inc   |  32 ++++++++----
+ rtl/unix/cthreads.pp  |   5 ++
+ rtl/unix/cwstring.pp  |   2 +-
+ rtl/unix/oscdeclh.inc |   4 +-
+ rtl/zos/sighnd.inc    |  34 ++++++++++---
+ rtl/zos/signal.inc    |  11 ++++-
+ rtl/zos/system.pp     |   6 +++
+ 9 files changed, 177 insertions(+), 49 deletions(-)
+
+diff --git a/rtl/s390x/cpuh.inc b/rtl/s390x/cpuh.inc
+index cb8746ac..d36dcf88 100644
+--- a/rtl/s390x/cpuh.inc
++++ b/rtl/s390x/cpuh.inc
+@@ -12,5 +12,22 @@
+  **********************************************************************}
+ 
+ type
+-  TNativeFPUControlWord = record
+-  end;
++  { floating point control register (FPC) }
++  TNativeFPUControlWord = dword;
++
++const
++  { FPC bits: IEEE trap enables, flags, data exception code, rounding mode }
++  fpc_trap_invalid   = $80000000;
++  fpc_trap_zerodiv   = $40000000;
++  fpc_trap_overflow  = $20000000;
++  fpc_trap_underflow = $10000000;
++  fpc_trap_inexact   = $08000000;
++  fpc_trap_mask      = $F8000000;
++  fpc_flag_invalid   = $00800000;
++  fpc_flag_zerodiv   = $00400000;
++  fpc_flag_overflow  = $00200000;
++  fpc_flag_underflow = $00100000;
++  fpc_flag_inexact   = $00080000;
++  fpc_flag_mask      = $00F80000;
++  fpc_dxc_mask       = $0000FF00;
++  fpc_round_mask     = $00000007;
+diff --git a/rtl/s390x/mathu.inc b/rtl/s390x/mathu.inc
+index edf8a31c..2035b12d 100644
+--- a/rtl/s390x/mathu.inc
++++ b/rtl/s390x/mathu.inc
+@@ -2,6 +2,10 @@
+     This file is part of the Free Pascal run time library.
+     Copyright (c) 2026 by the Free Pascal development team.
+ 
++    FPU control for s390x: the floating point control register (FPC) is
++    accessed through GetNativeFPUControlWord/SetNativeFPUControlWord
++    (see s390x.inc).
++
+     See the file COPYING.FPC, included in this distribution,
+     for details about the copyright.
+ 
+@@ -11,41 +15,98 @@
+ 
+  **********************************************************************}
+ 
+-
+-{ TODO: use fenv of the z/OS C runtime (fegetround/fesetround,
+-  feenableexcept); fixed values as on wasm32 for now }
+-
+-
+ function GetRoundMode: TFPURoundingMode;
+-begin
+-  GetRoundMode:=rmNearest;
+-end;
++  const
++    bits2rm: array[0..3] of TFPURoundingMode = (rmNearest,rmTruncate,rmUp,rmDown);
++  begin
++    result:=bits2rm[GetNativeFPUControlWord and 3];
++  end;
++
+ 
+ function SetRoundMode(const RoundMode: TFPURoundingMode): TFPURoundingMode;
+-begin
+-  SetRoundMode:=rmNearest;
+-end;
++  const
++    rm2bits: array[TFPURoundingMode] of byte = (0,3,2,1);
++  begin
++    softfloat_rounding_mode:=RoundMode;
++    SetRoundMode:=GetRoundMode;
++    SetNativeFPUControlWord((GetNativeFPUControlWord and not fpc_round_mask) or rm2bits[RoundMode]);
++  end;
++
+ 
+ function GetPrecisionMode: TFPUPrecisionMode;
+-begin
+-  GetPrecisionMode:=pmDouble;
+-end;
++  begin
++    result:=pmDouble;
++  end;
++
+ 
+ function SetPrecisionMode(const Precision: TFPUPrecisionMode): TFPUPrecisionMode;
+-begin
+-  SetPrecisionMode:=pmDouble;
+-end;
++  begin
++    result:=pmDouble;
++  end;
++
+ 
+ function GetExceptionMask: TFPUExceptionMask;
+-begin
+-  GetExceptionMask:=[exDenormalized,exOverflow,exPrecision];
+-end;
++  var
++    fpc: dword;
++  begin
++    fpc:=GetNativeFPUControlWord;
++    result:=[exDenormalized];
++    if (fpc and fpc_trap_invalid)=0 then
++      include(result,exInvalidOp);
++    if (fpc and fpc_trap_zerodiv)=0 then
++      include(result,exZeroDivide);
++    if (fpc and fpc_trap_overflow)=0 then
++      include(result,exOverflow);
++    if (fpc and fpc_trap_underflow)=0 then
++      include(result,exUnderflow);
++    if (fpc and fpc_trap_inexact)=0 then
++      include(result,exPrecision);
++  end;
++
+ 
+ function SetExceptionMask(const Mask: TFPUExceptionMask): TFPUExceptionMask;
+-begin
+-  SetExceptionMask:=[exDenormalized,exOverflow,exPrecision];
+-end;
++  var
++    traps: dword;
++  begin
++    ClearExceptions(false);
++    result:=GetExceptionMask;
++    softfloat_exception_mask:=mask;
++    traps:=0;
++    if not(exInvalidOp in Mask) then
++      traps:=traps or fpc_trap_invalid;
++    if not(exZeroDivide in Mask) then
++      traps:=traps or fpc_trap_zerodiv;
++    if not(exOverflow in Mask) then
++      traps:=traps or fpc_trap_overflow;
++    if not(exUnderflow in Mask) then
++      traps:=traps or fpc_trap_underflow;
++    if not(exPrecision in Mask) then
++      traps:=traps or fpc_trap_inexact;
++    SetNativeFPUControlWord((GetNativeFPUControlWord and not fpc_trap_mask) or traps);
++  end;
++
+ 
+ procedure ClearExceptions(RaisePending: Boolean);
+-begin
+-end;
++  var
++    fpc: dword;
++    f: TFPUException;
++  begin
++    fpc:=GetNativeFPUControlWord;
++    if RaisePending then
++      begin
++        if (fpc and fpc_flag_zerodiv)<>0 then
++          float_raise(exZeroDivide);
++        if (fpc and fpc_flag_overflow)<>0 then
++          float_raise(exOverflow);
++        if (fpc and fpc_flag_underflow)<>0 then
++          float_raise(exUnderflow);
++        if (fpc and fpc_flag_invalid)<>0 then
++          float_raise(exInvalidOp);
++        if (fpc and fpc_flag_inexact)<>0 then
++          float_raise(exPrecision);
++        for f in softfloat_exception_flags do
++          float_raise(f);
++      end;
++    softfloat_exception_flags:=[];
++    SetNativeFPUControlWord(fpc and not (fpc_flag_mask or fpc_dxc_mask));
++  end;
+diff --git a/rtl/s390x/s390x.inc b/rtl/s390x/s390x.inc
+index 8e523f58..c7d40aad 100644
+--- a/rtl/s390x/s390x.inc
++++ b/rtl/s390x/s390x.inc
+@@ -22,29 +22,41 @@
+                                   FPU
+ ****************************************************************************}
+ 
+-{$define FPC_SYSTEM_HAS_SYSINITFPU}
+-procedure SysInitFPU;
++{ the floating point control register is accessed in C
++  (zos-pascal-llvm: runtime/zosfpu.c) }
++function zos_get_fpc: dword; cdecl; external name 'FPC_ZOS_GET_FPC';
++procedure zos_set_fpc(v: dword); cdecl; external name 'FPC_ZOS_SET_FPC';
++
++function GetNativeFPUControlWord: TNativeFPUControlWord;{$ifdef SYSTEMINLINE}inline;{$endif}
+   begin
+-    softfloat_rounding_mode:=rmNearest;
+-    softfloat_exception_mask:=[float_flag_underflow,float_flag_inexact,float_flag_denormal];
+-    softfloat_exception_flags:=[];
++    result:=zos_get_fpc;
+   end;
+ 
+ 
+-{$define FPC_SYSTEM_HAS_SYSRESETFPU}
+-procedure SysResetFPU;{$ifdef SYSTEMINLINE}inline;{$endif}
++procedure SetNativeFPUControlWord(const cw: TNativeFPUControlWord);{$ifdef SYSTEMINLINE}inline;{$endif}
+   begin
+-    softfloat_exception_flags:=[];
++    zos_set_fpc(cw);
+   end;
+ 
+ 
+-function GetNativeFPUControlWord: TNativeFPUControlWord;{$ifdef SYSTEMINLINE}inline;{$endif}
++{$define FPC_SYSTEM_HAS_SYSINITFPU}
++procedure SysInitFPU;
+   begin
++    softfloat_rounding_mode:=rmNearest;
++    softfloat_exception_mask:=[float_flag_underflow,float_flag_inexact,float_flag_denormal];
++    softfloat_exception_flags:=[];
++    { round to nearest, trap on invalid operation, division by zero and
++      overflow (like the other targets) }
++    zos_set_fpc((zos_get_fpc and not (fpc_trap_mask or fpc_flag_mask or fpc_dxc_mask or fpc_round_mask))
++      or fpc_trap_invalid or fpc_trap_zerodiv or fpc_trap_overflow);
+   end;
+ 
+ 
+-procedure SetNativeFPUControlWord(const cw: TNativeFPUControlWord);{$ifdef SYSTEMINLINE}inline;{$endif}
++{$define FPC_SYSTEM_HAS_SYSRESETFPU}
++procedure SysResetFPU;{$ifdef SYSTEMINLINE}inline;{$endif}
+   begin
++    softfloat_exception_flags:=[];
++    zos_set_fpc(zos_get_fpc and not (fpc_flag_mask or fpc_dxc_mask));
+   end;
+ 
+ 
+diff --git a/rtl/unix/cthreads.pp b/rtl/unix/cthreads.pp
+index 2c5917a1..14f91148 100644
+--- a/rtl/unix/cthreads.pp
++++ b/rtl/unix/cthreads.pp
+@@ -201,6 +201,11 @@       TINTRTLEvent = record
+         threadvarblocksize:=align(threadvarblocksize,16);
+         {$endif cpuloongarch64}
+ 
++        {$ifdef cpus390x}
++        {$define threadvarblocksize_set}
++        threadvarblocksize:=align(threadvarblocksize,16);
++        {$endif cpus390x}
++
+         {$ifndef threadvarblocksize_set}
+         {$error threadvarblocksize must be set! }
+         {$endif threadvarblocksize_set}
+diff --git a/rtl/unix/cwstring.pp b/rtl/unix/cwstring.pp
+index eb95bf9a..ab390095 100644
+--- a/rtl/unix/cwstring.pp
++++ b/rtl/unix/cwstring.pp
+@@ -173,7 +173,7 @@ function mblen(const s: PAnsiChar; n: size_t): size_t; cdecl; external clib name
+   {$define ACCEPT_646}
+   CODESET = 51;
+   LC_ALL = 0;
+-{$elseif defined(aix)}
++{$elseif defined(aix) or defined(zos)}
+   CODESET = 49;
+   LC_ALL = -1;
+ {$elseif defined(dragonfly)}
+diff --git a/rtl/unix/oscdeclh.inc b/rtl/unix/oscdeclh.inc
+index 1fa029bf..0fa92480 100644
+--- a/rtl/unix/oscdeclh.inc
++++ b/rtl/unix/oscdeclh.inc
+@@ -132,7 +132,7 @@
+     function  FpLseek   (fd : cint; offset : TOff; whence : cint): TOff; cdecl; external clib name 'lseek'+suffix64bit;
+     Function  FpTime       (var tloc : Time_t): Time_t; cdecl; external clib name 'time';
+     function  FpFtruncate(fd : cint; flength : TOff): cint; cdecl; external clib name 'ftruncate'+suffix64bit;
+-    Function  FPSigaction (sig: cInt; act :pSigActionRec;oact:pSigActionRec):cint;cdecl; external clib name 'sigaction';
++    Function  FPSigaction (sig: cInt; act :pSigActionRec;oact:pSigActionRec):cint;cdecl; external clib name {$ifdef zos}'FPC_ZOS_SIGACTION'{$else}'sigaction'{$endif};
+ {$ifdef beos}
+   {$ifdef haiku}
+     Function  FPSelect  (N:cint;readfds,writefds,exceptfds:pfdSet;TimeOut:PTimeVal):cint; cdecl; external 'network' name 'select';
+@@ -183,7 +183,7 @@
+     { overloads not available in bunxh.inc }
+     function  FpReaddir (dirp : pdir) : pdirent;cdecl; external clib name 'readdir'+suffix64bit;
+     function  FpClosedir (dirp : pdir): cint; cdecl; external clib name 'closedir'{$ifdef aix}+suffix64bit{$endif};
+-    function  FpSigaction (sig: cint;var act : sigactionrec; var oact : sigactionrec): cint; cdecl; external clib name 'sigaction';
++    function  FpSigaction (sig: cint;var act : sigactionrec; var oact : sigactionrec): cint; cdecl; external clib name {$ifdef zos}'FPC_ZOS_SIGACTION'{$else}'sigaction'{$endif};
+ {$if not defined(darwin) and not defined(haiku) and not defined(beos)}
+     Function  FpSigTimedWait (Const sigset : TSigSet; info : Psiginfo; var timeout:Ttimespec): cInt; cdecl; external clib name 'sigtimedwait';
+ {$endif}
+diff --git a/rtl/zos/sighnd.inc b/rtl/zos/sighnd.inc
+index 54c67cc5..c2b9302a 100644
+--- a/rtl/zos/sighnd.inc
++++ b/rtl/zos/sighnd.inc
+@@ -2,10 +2,11 @@
+     This file is part of the Free Pascal run time library.
+     Copyright (c) 2026 by the Free Pascal development team
+ 
+-    Signal handler for z/OS: converts synchronous signals into run-time
+-    errors. Resuming at HandleErrorAddrFrame through the machine context
+-    (as on other targets) is not implemented; the error is reported
+-    directly from the signal handler.
++    Signal handler for z/OS: converts signals into run-time errors. As on
++    other targets, the machine context is changed so that the interrupted
++    code continues in HandleErrorAddrFrame (FPC_ZOS_SIGREDIRECT, zossig.c);
++    raising directly in the handler does not work because the unwinder
++    cannot pass the LE signal delivery frames.
+ 
+     See the file COPYING.FPC, included in this distribution,
+     for details about the copyright.
+@@ -16,6 +17,8 @@
+ 
+  **********************************************************************}
+ 
++procedure FPC_ZOS_SIGREDIRECT(ucontext, fn: pointer; err: clong); cdecl; external name 'FPC_ZOS_SIGREDIRECT';
++
+ procedure SignalToRunerror(Sig: longint; info : PSigInfo; SigContext:PSigContext); public name '_FPC_DEFAULTSIGHANDLER'; cdecl;
+ var
+   res : word;
+@@ -23,7 +26,24 @@ procedure SignalToRunerror(Sig: longint; info : PSigInfo; SigContext:PSigContext
+   res:=0;
+   case sig of
+     SIGFPE:
+-      res:=207;
++      begin
++        case info^.si_code of
++          FPE_INTDIV:
++            res:=200;
++          FPE_FLTDIV:
++            res:=208;
++          FPE_FLTOVF:
++            res:=205;
++          FPE_FLTUND:
++            res:=206;
++          FPE_INTOVF:
++            res:=215;
++          else
++            res:=207;
++        end;
++        { the exception flags and the data exception code are cleared in
++          the machine context by FPC_ZOS_SIGREDIRECT }
++      end;
+     SIGILL,
+     SIGBUS,
+     SIGSEGV:
+@@ -34,6 +54,6 @@ procedure SignalToRunerror(Sig: longint; info : PSigInfo; SigContext:PSigContext
+       res:=233;
+   end;
+   reenable_signal(sig);
+-  if res<>0 then
+-    HandleErrorAddrFrame(res,nil,nil);
++  if (res<>0) and assigned(SigContext) then
++    FPC_ZOS_SIGREDIRECT(SigContext,@HandleErrorAddrFrame,res);
+ end;
+diff --git a/rtl/zos/signal.inc b/rtl/zos/signal.inc
+index afa3103e..e2ce4af5 100644
+--- a/rtl/zos/signal.inc
++++ b/rtl/zos/signal.inc
+@@ -65,8 +65,15 @@
+   SA_SIGINFO   = $04000000;
+   SA_NODEFER   = $01000000;
+ 
+-  { si_code values for SIGFPE are not needed by the RTL on z/OS (the
+-    runtime error is derived from the signal only) }
++  { si_code values for SIGFPE (measured on z/OS) }
++  FPE_INTDIV = 31;
++  FPE_INTOVF = 32;
++  FPE_FLTDIV = 33;
++  FPE_FLTOVF = 34;
++  FPE_FLTUND = 35;
++  FPE_FLTRES = 36;
++  FPE_FLTINV = 37;
++  FPE_FLTSUB = 38;
+ 
+ type
+   { sigset_t: 8 bytes; always manipulated through the C library }
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+index f276a0dc..45e19ef0 100644
+--- a/rtl/zos/system.pp
++++ b/rtl/zos/system.pp
+@@ -29,6 +29,12 @@ interface
+ {$L zosunwind.o}
+ { atomic operations for the s390x RTL (runtime/zosatomic.c) }
+ {$L zosatomic.o}
++{ POSIX functions missing in the z/OS C runtime (runtime/zoscompat.c) }
++{$L zoscompat.o}
++{ floating point control register (runtime/zosfpu.c) }
++{$L zosfpu.o}
++{ signal context redirection (runtime/zossig.c) }
++{$L zossig.o}
+ 
+ { include system-independent routine headers }
+ 
+-- 
+2.43.0
+

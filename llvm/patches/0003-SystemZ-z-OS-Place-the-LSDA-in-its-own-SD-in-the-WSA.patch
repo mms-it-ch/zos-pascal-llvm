@@ -1,0 +1,58 @@
+From f5cf797ec373712011f098065d4d919e70463396 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 13:28:15 +0200
+Subject: [PATCH 3/6] [SystemZ][z/OS] Place the LSDA in its own SD in the WSA
+
+The binder rejects objects with an exception table (LSDA), because the
+LSDA is a renamable PR in a C_WSA64 ED (with initial load) of the root
+SD: IEW2353E SECTION $PRIVnnnnnn CONTAINS INVALID DATA. ERROR CODE IS
+25000E. Place the LSDA like a static variable instead: an SD of its own
+with a C_WSA64 ED (deferred load) and a non-renamable PR with section
+scope. The LSDA cannot be put into the code section, because type info
+entries are addresses of data in the WSA.
+
+Tested on z/OS: a module with a landing pad binds and runs.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ .../CodeGen/TargetLoweringObjectFileImpl.cpp  | 19 +++++++++++++------
+ 1 file changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp b/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
+index 3e5374e55..6bb073925 100644
+--- a/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
++++ b/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
+@@ -2861,17 +2861,24 @@ MCSection *TargetLoweringObjectFileGOFF::getExplicitSectionGlobal(
+ 
+ MCSection *TargetLoweringObjectFileGOFF::getSectionForLSDA(
+     const Function &F, const MCSymbol &FnSym, const TargetMachine &TM) const {
+-  std::string Name = ".gcc_exception_table." + F.getName().str();
+-
++  // The LSDA is placed like a static variable: in its own SD with a C_WSA64
++  // ED and a PR. A renamable PR in a C_WSA64 ED of the root SD (with initial
++  // load) is rejected by the binder (IEW2353E ... ERROR CODE IS 25000E), and
++  // the LSDA cannot be put into the code section, because type info entries
++  // are addresses of data in the WSA.
++  std::string Name = "GCC_except." + F.getName().str();
++  MCSectionGOFF *SD = getContext().getGOFFSection(
++      SectionKind::getMetadata(), Name,
++      GOFF::SDAttr{GOFF::ESD_TA_Unspecified, GOFF::ESD_BSC_Section});
+   MCSectionGOFF *WSA = getContext().getGOFFSection(
+       SectionKind::getMetadata(), GOFF::CLASS_WSA,
+       GOFF::EDAttr{false, GOFF::ESD_RMODE_64, GOFF::ESD_NS_Parts,
+                    GOFF::ESD_TS_ByteOriented, GOFF::ESD_BA_Merge,
+-                   GOFF::ESD_LB_Initial, GOFF::ESD_RQ_0, 0},
+-      static_cast<MCSectionGOFF *>(TextSection)->getParent());
+-  WSA->setAlignment(Align(4)); // Fullword
++                   GOFF::ESD_LB_Deferred, GOFF::ESD_RQ_0, 0},
++      SD);
++  WSA->setAlignment(Align(8));
+   return getContext().getGOFFSection(SectionKind::getData(), Name,
+-                                     GOFF::PRAttr{true, GOFF::ESD_EXE_DATA,
++                                     GOFF::PRAttr{false, GOFF::ESD_EXE_DATA,
+                                                   GOFF::ESD_LT_XPLink,
+                                                   GOFF::ESD_BSC_Section, 0},
+                                      WSA);
+-- 
+2.43.0
+

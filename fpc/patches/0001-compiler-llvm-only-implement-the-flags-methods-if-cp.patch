@@ -1,0 +1,39 @@
+From abbbeda14812a1cf5f57a3fa1ac70fa985c84d26 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 12:32:10 +0200
+Subject: [PATCH 01/10] compiler/llvm: only implement the flags methods if
+ cpuflags is defined
+
+thlcgllvm declares a_jmp_flags, g_flags2reg and g_flags2ref only if
+cpuflags is defined, but implemented them unconditionally. This did not
+show up so far because all CPUs supported by the LLVM code generator
+define cpuflags.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/hlcgllvm.pas | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/compiler/llvm/hlcgllvm.pas b/compiler/llvm/hlcgllvm.pas
+index f1be6b1f..94cfe20e 100644
+--- a/compiler/llvm/hlcgllvm.pas
++++ b/compiler/llvm/hlcgllvm.pas
+@@ -2061,6 +2061,7 @@ implementation
+     end;
+ 
+ 
++{$ifdef cpuflags}
+   procedure thlcgllvm.a_jmp_flags(list: TAsmList; const f: TResFlags; l: tasmlabel);
+     begin
+       internalerror(2013060224);
+@@ -2077,6 +2078,7 @@ implementation
+     begin
+       internalerror(2013060226);
+     end;
++{$endif cpuflags}
+ 
+ 
+   procedure thlcgllvm.a_bit_scan_reg_reg(list: TAsmList; reverse,not_zero: boolean; srcsize, dstsize: tdef; src, dst: tregister);
+-- 
+2.43.0
+

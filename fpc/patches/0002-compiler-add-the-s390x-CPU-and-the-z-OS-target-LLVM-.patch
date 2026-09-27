@@ -1,0 +1,3418 @@
+From ac7967f33985aa53a11bd9c21178c8b04732b670 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 12:32:24 +0200
+Subject: [PATCH 02/10] compiler: add the s390x CPU and the z/OS target (LLVM
+ code generator only)
+
+New CPU s390x (z/Architecture) and target system_s390x_zos: 64 bit z/OS
+UNIX System Services programs using XPLINK-64 and the Language
+Environment, in ASCII mode (like IBM Open XL C/C++). Only the LLVM code
+generator is supported (build with LLVM=1 PPC_TARGET=s390x); the native
+code generator units are stubs that are only reached for pure assembler
+routines, which are not supported.
+
+- s390x/cpupara: parameter passing like ZOSXPLinkABIInfo in clang:
+  integers are extended to 64 bits, floating point values go to
+  FPR 0/2/4/6 (varargs like integers), records are passed as sequences of
+  64 bit integers ("complex-like" records as two floating point values)
+- LLVM triple s390x-ibm-zos and the data layout of clang
+- symbol names are emitted without the \01 prefix on z/OS, so that the
+  backend recognises main and emits CELQMAIN (GOFF adds no prefix)
+- t_zos: programs are bound on z/OS; the linker writes a link list
+  (<program>.zlink) and calls the external tool zos-ld
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/Makefile             |  13 +-
+ compiler/Makefile.fpc         |  13 +-
+ compiler/entfile.pas          |   6 +-
+ compiler/fpcdefs.inc          |  11 +
+ compiler/globals.pas          |   6 +
+ compiler/llvm/agllvm.pas      |   2 +-
+ compiler/llvm/llvmdef.pas     |  11 +
+ compiler/options.pas          |   7 +
+ compiler/pp.pas               |   7 +
+ compiler/psystem.pas          |   4 +
+ compiler/s390x/aasmcpu.pas    | 218 +++++++++++++++
+ compiler/s390x/cgcpu.pas      | 221 +++++++++++++++
+ compiler/s390x/cpubase.pas    | 365 ++++++++++++++++++++++++
+ compiler/s390x/cpuinfo.pas    | 162 +++++++++++
+ compiler/s390x/cpunode.pas    |  44 +++
+ compiler/s390x/cpupara.pas    | 508 ++++++++++++++++++++++++++++++++++
+ compiler/s390x/cpupi.pas      |  59 ++++
+ compiler/s390x/cputarg.pas    |  54 ++++
+ compiler/s390x/hlcgcpu.pas    |  63 +++++
+ compiler/s390x/rs390xcon.inc  |  34 +++
+ compiler/s390x/rs390xdwa.inc  |  34 +++
+ compiler/s390x/rs390xnor.inc  |   2 +
+ compiler/s390x/rs390xnum.inc  |  34 +++
+ compiler/s390x/rs390xrni.inc  |  34 +++
+ compiler/s390x/rs390xsri.inc  |  34 +++
+ compiler/s390x/rs390xsta.inc  |  34 +++
+ compiler/s390x/rs390xstd.inc  |  34 +++
+ compiler/s390x/rs390xsup.inc  |  34 +++
+ compiler/s390x/s390xreg.dat   |  41 +++
+ compiler/s390x/symcpu.pas     | 220 +++++++++++++++
+ compiler/s390x/tripletcpu.pas |  40 +++
+ compiler/systems.inc          |   9 +-
+ compiler/systems.pas          |   6 +-
+ compiler/systems/i_zos.pas    | 116 ++++++++
+ compiler/systems/t_zos.pas    | 183 ++++++++++++
+ compiler/triplet.pas          |   2 +
+ compiler/utils/mks390xreg.pp  | 290 +++++++++++++++++++
+ compiler/version.pas          |   3 +
+ 38 files changed, 2949 insertions(+), 9 deletions(-)
+ create mode 100644 compiler/s390x/aasmcpu.pas
+ create mode 100644 compiler/s390x/cgcpu.pas
+ create mode 100644 compiler/s390x/cpubase.pas
+ create mode 100644 compiler/s390x/cpuinfo.pas
+ create mode 100644 compiler/s390x/cpunode.pas
+ create mode 100644 compiler/s390x/cpupara.pas
+ create mode 100644 compiler/s390x/cpupi.pas
+ create mode 100644 compiler/s390x/cputarg.pas
+ create mode 100644 compiler/s390x/hlcgcpu.pas
+ create mode 100644 compiler/s390x/rs390xcon.inc
+ create mode 100644 compiler/s390x/rs390xdwa.inc
+ create mode 100644 compiler/s390x/rs390xnor.inc
+ create mode 100644 compiler/s390x/rs390xnum.inc
+ create mode 100644 compiler/s390x/rs390xrni.inc
+ create mode 100644 compiler/s390x/rs390xsri.inc
+ create mode 100644 compiler/s390x/rs390xsta.inc
+ create mode 100644 compiler/s390x/rs390xstd.inc
+ create mode 100644 compiler/s390x/rs390xsup.inc
+ create mode 100644 compiler/s390x/s390xreg.dat
+ create mode 100644 compiler/s390x/symcpu.pas
+ create mode 100644 compiler/s390x/tripletcpu.pas
+ create mode 100644 compiler/systems/i_zos.pas
+ create mode 100644 compiler/systems/t_zos.pas
+ create mode 100644 compiler/utils/mks390xreg.pp
+
+diff --git a/compiler/Makefile b/compiler/Makefile
+index e0297310..8f348c8e 100644
+--- a/compiler/Makefile
++++ b/compiler/Makefile
+@@ -456,6 +456,9 @@ endif
+ ifdef LOONGARCH64
+ PPC_TARGET=loongarch64
+ endif
++ifdef S390X
++PPC_TARGET=s390x
++endif
+ ifndef PPC_TARGET
+ PPC_TARGET=$(CPU_TARGET)
+ endif
+@@ -605,6 +608,9 @@ endif
+ ifeq ($(CPC_TARGET),loongarch64)
+ CPUSUF=loongarch64
+ endif
++ifeq ($(CPC_TARGET),s390x)
++CPUSUF=s390x
++endif
+ NOCPUDEF=1
+ MSGFILE=msg/error$(FPCLANG).msg
+ PPUDUMPPROG:=$(firstword $(strip $(wildcard $(addsuffix /ppudump$(SRCEXEEXT),$(SEARCHPATH)))))
+@@ -652,7 +658,7 @@ endif
+ endif
+ override LOCALOPT+=-d$(CPC_TARGET)
+ ifdef LLVM
+-ifeq ($(findstring $(PPC_TARGET),x86_64 aarch64 arm),)
++ifeq ($(findstring $(PPC_TARGET),x86_64 aarch64 arm s390x),)
+ $(error The $(PPC_TARGET) architecture is not (yet) supported by the FPC/LLVM code generator)
+ endif
+ override LOCALOPT+=-dllvm -Fullvm
+@@ -717,6 +723,11 @@ endif
+ ifeq ($(PPC_TARGET),loongarch64)
+ override LOCALOPT+=-Fuloongarch64
+ endif
++
++# s390x specific (LLVM code generator only)
++ifeq ($(PPC_TARGET),s390x)
++override LOCALOPT+=-Fus390x
++endif
+ OPTWPOCOLLECT=-OWdevirtcalls,optvmts -FW$(BASEDIR)/pp1.wpo
+ OPTWPOPERFORM=-Owdevirtcalls,optvmts -Fw$(BASEDIR)/pp1.wpo
+ ifneq ($(findstring $(OS_TARGET),darwin linux dragonfly freebsd solaris),)
+diff --git a/compiler/Makefile.fpc b/compiler/Makefile.fpc
+index eb24263b..26bc77fc 100644
+--- a/compiler/Makefile.fpc
++++ b/compiler/Makefile.fpc
+@@ -134,6 +134,9 @@ endif
+ ifdef LOONGARCH64
+ PPC_TARGET=loongarch64
+ endif
++ifdef S390X
++PPC_TARGET=s390x
++endif
+ 
+ # Default is to generate a compiler for the same
+ # platform as CPU_TARGET (a native compiler)
+@@ -317,6 +320,9 @@ endif
+ ifeq ($(CPC_TARGET),loongarch64)
+ CPUSUF=loongarch64
+ endif
++ifeq ($(CPC_TARGET),s390x)
++CPUSUF=s390x
++endif
+ 
+ # Do not define the default -d$(CPU_TARGET) because that
+ # will conflict with our -d$(CPC_TARGET)
+@@ -382,7 +388,7 @@ override LOCALOPT+=-d$(CPC_TARGET)
+ 
+ #include LLVM define/directory if requested
+ ifdef LLVM
+-ifeq ($(findstring $(PPC_TARGET),x86_64 aarch64 arm),)
++ifeq ($(findstring $(PPC_TARGET),x86_64 aarch64 arm s390x),)
+ $(error The $(PPC_TARGET) architecture is not (yet) supported by the FPC/LLVM code generator)
+ endif
+ 
+@@ -494,6 +500,11 @@ ifeq ($(PPC_TARGET),loongarch64)
+ override LOCALOPT+=-Fuloongarch64
+ endif
+ 
++# s390x specific (LLVM code generator only)
++ifeq ($(PPC_TARGET),s390x)
++override LOCALOPT+=-Fus390x
++endif
++
+ OPTWPOCOLLECT=-OWdevirtcalls,optvmts -FW$(BASEDIR)/pp1.wpo
+ OPTWPOPERFORM=-Owdevirtcalls,optvmts -Fw$(BASEDIR)/pp1.wpo
+ # symbol liveness WPO requires nm, smart linking and no stripping (the latter
+diff --git a/compiler/entfile.pas b/compiler/entfile.pas
+index 337a2e4c..1af82570 100644
+--- a/compiler/entfile.pas
++++ b/compiler/entfile.pas
+@@ -168,7 +168,8 @@ interface
+     { 22 } 16 {'z80'},
+     { 23 } 64 {'mips64'},
+     { 24 } 64 {'mips64el'},
+-    { 25 } 64 {'loongarch64'}
++    { 25 } 64 {'loongarch64'},
++    { 26 } 64 {'s390x'}
+     );
+   CpuAluBitSize : array[tsystemcpu] of longint =
+     (
+@@ -197,7 +198,8 @@ interface
+     { 22 }  8 {'z80'},
+     { 23 } 64 {'mips64'},
+     { 24 } 64 {'mips64el'},
+-    { 25 } 64 {'loongarch64'}
++    { 25 } 64 {'loongarch64'},
++    { 26 } 64 {'s390x'}
+     );
+ {$endif generic_cpu}
+ 
+diff --git a/compiler/fpcdefs.inc b/compiler/fpcdefs.inc
+index e9362baf..266070ed 100644
+--- a/compiler/fpcdefs.inc
++++ b/compiler/fpcdefs.inc
+@@ -421,6 +421,17 @@
+   {$define support_rodata}
+ {$endif loongarch64}
+ 
++{$ifdef s390x}
++  {$define cpu64bit}
++  {$define cpu64bitaddr}
++  {$define cpu64bitalu}
++  {$define cputargethasfixedstack}
++  {$define cpucapabilities}
++  {$define SUPPORT_SAFECALL}
++  { only the LLVM code generator is supported }
++  {$define NOOPT}
++{$endif s390x}
++
+ { Stabs is not officially supported on 64 bit targets by gdb, except on Mac OS X
+   (but there we don't support it)
+ }
+diff --git a/compiler/globals.pas b/compiler/globals.pas
+index ea25770b..a1a5fa82 100644
+--- a/compiler/globals.pas
++++ b/compiler/globals.pas
+@@ -690,6 +690,12 @@       tpendingstate = record
+         asmcputype : cpu_none;
+         fputype : fpu_fd;
+   {$endif loongarch64}
++  {$ifdef s390x}
++        cputype : cpu_none;
++        optimizecputype : cpu_none;
++        asmcputype : cpu_none;
++        fputype : fpu_ieee;
++  {$endif s390x}
+ {$endif not GENERIC_CPU}
+         asmmode : asmmode_standard;
+ {$ifndef jvm}
+diff --git a/compiler/llvm/agllvm.pas b/compiler/llvm/agllvm.pas
+index ccfc209a..033cb1d7 100644
+--- a/compiler/llvm/agllvm.pas
++++ b/compiler/llvm/agllvm.pas
+@@ -1790,7 +1790,7 @@        tdoubleval = record
+           idtxt  : 'CLANG-LLVM';
+           asmbin : 'clang';
+           asmcmd: '-x ir $OPT -target $TRIPLET -c -o $OBJ $ASM $EXTRAOPT';
+-          supported_targets : [system_x86_64_linux,system_aarch64_linux,system_arm_linux,system_x86_64_openbsd,system_x86_64_freebsd];
++          supported_targets : [system_x86_64_linux,system_aarch64_linux,system_arm_linux,system_x86_64_openbsd,system_x86_64_freebsd,system_s390x_zos];
+           flags : [af_smartlink_sections,af_llvm];
+           labelprefix : '.L';
+           labelmaxlen : -1;
+diff --git a/compiler/llvm/llvmdef.pas b/compiler/llvm/llvmdef.pas
+index 1376909c..d601da7c 100644
+--- a/compiler/llvm/llvmdef.pas
++++ b/compiler/llvm/llvmdef.pas
+@@ -271,6 +271,17 @@ implementation
+ 
+   function llvmmangledname(const s: TSymStr): TSymStr;
+     begin
++      { z/OS (GOFF) does not add a global prefix to symbol names, and the
++        backend recognises special symbols such as main by their plain name }
++      if (target_info.system=system_s390x_zos) and
++         (copy(s,1,length('llvm.'))<>'llvm.') then
++        begin
++          if s[1]<>'"' then
++            result:='@"'+s+'"'
++          else
++            result:='@'+s;
++          exit;
++        end;
+       if copy(s,1,length('llvm.'))<>'llvm.' then
+         if s[1]<>'"' then
+           result:='@"\01'+s+'"'
+diff --git a/compiler/options.pas b/compiler/options.pas
+index 283ec883..5b26f8dc 100644
+--- a/compiler/options.pas
++++ b/compiler/options.pas
+@@ -4850,6 +4850,13 @@ procedure read_arguments(cmd:TCmdStr);
+         def_system_macro('FPC_LOCALS_ARE_STACK_REG_RELATIVE');
+       {$endif loongarch64}
+ 
++      {$ifdef s390x}
++        def_system_macro('CPUS390X');
++        def_system_macro('CPU64');
++        def_system_macro('FPC_CURRENCY_IS_INT64');
++        def_system_macro('FPC_COMP_IS_INT64');
++      {$endif s390x}
++
+       {$if defined(cpu8bitalu)}
+         def_system_macro('CPUINT8');
+       {$elseif defined(cpu16bitalu)}
+diff --git a/compiler/pp.pas b/compiler/pp.pas
+index c29dc4d9..94dd964b 100644
+--- a/compiler/pp.pas
++++ b/compiler/pp.pas
+@@ -208,6 +208,13 @@
+   {$endif CPUDEFINED}
+   {$define CPUDEFINED}
+ {$endif LOONGARCH64}
++{$ifdef S390X}
++  {$ifdef CPUDEFINED}
++    {$fatal ONLY one of the switches for the CPU type must be defined}
++  {$endif CPUDEFINED}
++  {$define CPUDEFINED}
++{$endif S390X}
++
+ 
+ {$ifndef CPUDEFINED}
+   {$fatal A CPU type switch must be defined}
+diff --git a/compiler/psystem.pas b/compiler/psystem.pas
+index 99492d6f..ae368911 100644
+--- a/compiler/psystem.pas
++++ b/compiler/psystem.pas
+@@ -403,6 +403,10 @@ implementation
+         create_fpu_types;
+         s64currencytype:=corddef.create(scurrency,low(int64),high(int64),true);
+ {$endif loongarch64}
++{$ifdef s390x}
++        create_fpu_types;
++        s64currencytype:=corddef.create(scurrency,low(int64),high(int64),true);
++{$endif s390x}
+         set_default_int_types;
+         { some other definitions }
+         charpointertype:=cpointerdef.create(cansichartype);
+diff --git a/compiler/s390x/aasmcpu.pas b/compiler/s390x/aasmcpu.pas
+new file mode 100644
+index 00000000..18a82102
+--- /dev/null
++++ b/compiler/s390x/aasmcpu.pas
+@@ -0,0 +1,218 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Contains the assembler object for s390x
++
++    The s390x port only supports the LLVM code generator. The instruction
++    class below only exists for the generic compiler parts; FPC never
++    writes s390x machine instructions itself.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit aasmcpu;
++
++{$i fpcdefs.inc}
++
++interface
++
++uses
++  globtype,verbose,
++  aasmbase,aasmtai,aasmdata,aasmsym,
++  cpubase,cpuinfo,cgbase,cgutils;
++
++    const
++      { "mov reg,reg" source operand number }
++      O_MOV_SOURCE = 1;
++      { "mov reg,reg" destination operand number }
++      O_MOV_DEST = 0;
++
++    type
++      taicpu = class(tai_cpu_abstract_sym)
++         constructor op_none(op : tasmop);
++         constructor op_reg(op : tasmop;_op1 : tregister);
++         constructor op_const(op : tasmop;_op1 : aint);
++         constructor op_ref(op : tasmop;const _op1 : treference);
++         constructor op_reg_reg(op : tasmop;_op1,_op2 : tregister);
++         constructor op_reg_ref(op : tasmop;_op1 : tregister;const _op2 : treference);
++         constructor op_reg_const(op:tasmop; _op1: tregister; _op2: aint);
++         constructor op_sym(op : tasmop;_op1 : tasmsymbol);
++         constructor op_sym_ofs(op : tasmop;_op1 : tasmsymbol;_op1ofs:aint);
++         constructor op_cond_sym(op : tasmop;cond:TAsmCond;_op1 : tasmsymbol);
++
++         function is_same_reg_move(regtype: Tregistertype):boolean; override;
++
++         { register spilling code }
++         function spilling_get_operation_type(opnr: longint): topertype;override;
++      end;
++
++      tai_align = class(tai_align_abstract)
++        { nothing to add }
++      end;
++
++    procedure InitAsm;
++    procedure DoneAsm;
++
++    function spilling_create_load(const ref:treference;r:tregister):Taicpu;
++    function spilling_create_store(r:tregister; const ref:treference):Taicpu;
++
++implementation
++
++{*****************************************************************************
++                                 taicpu Constructors
++*****************************************************************************}
++
++    constructor taicpu.op_none(op : tasmop);
++      begin
++        inherited create(op);
++      end;
++
++
++    constructor taicpu.op_reg(op : tasmop;_op1 : tregister);
++      begin
++        inherited create(op);
++        ops:=1;
++        loadreg(0,_op1);
++      end;
++
++
++    constructor taicpu.op_const(op : tasmop;_op1 : aint);
++      begin
++        inherited create(op);
++        ops:=1;
++        loadconst(0,_op1);
++      end;
++
++
++    constructor taicpu.op_ref(op : tasmop;const _op1 : treference);
++      begin
++        inherited create(op);
++        ops:=1;
++        loadref(0,_op1);
++      end;
++
++
++    constructor taicpu.op_reg_reg(op : tasmop;_op1,_op2 : tregister);
++      begin
++        inherited create(op);
++        ops:=2;
++        loadreg(0,_op1);
++        loadreg(1,_op2);
++      end;
++
++
++    constructor taicpu.op_reg_ref(op : tasmop;_op1 : tregister;const _op2 : treference);
++      begin
++        inherited create(op);
++        ops:=2;
++        loadreg(0,_op1);
++        loadref(1,_op2);
++      end;
++
++
++    constructor taicpu.op_reg_const(op:tasmop; _op1: tregister; _op2: aint);
++      begin
++        inherited create(op);
++        ops:=2;
++        loadreg(0,_op1);
++        loadconst(1,_op2);
++      end;
++
++
++    constructor taicpu.op_sym(op : tasmop;_op1 : tasmsymbol);
++      begin
++        inherited create(op);
++        ops:=1;
++        loadsymbol(0,_op1,0);
++      end;
++
++
++    constructor taicpu.op_sym_ofs(op : tasmop;_op1 : tasmsymbol;_op1ofs:aint);
++      begin
++        inherited create(op);
++        ops:=1;
++        loadsymbol(0,_op1,_op1ofs);
++      end;
++
++
++    constructor taicpu.op_cond_sym(op : tasmop;cond:TAsmCond;_op1 : tasmsymbol);
++      begin
++        inherited create(op);
++        condition:=cond;
++        ops:=1;
++        loadsymbol(0,_op1,0);
++      end;
++
++
++    function taicpu.is_same_reg_move(regtype: Tregistertype):boolean;
++      begin
++        result:=
++          (opcode=A_LGR) and
++          (ops=2) and
++          (oper[0]^.typ=top_reg) and
++          (oper[1]^.typ=top_reg) and
++          (oper[0]^.reg=oper[1]^.reg);
++      end;
++
++
++    function taicpu.spilling_get_operation_type(opnr: longint): topertype;
++      begin
++        case opcode of
++          A_LG,A_LGR,A_LGHI,A_LA:
++            if opnr=0 then
++              result:=operand_write
++            else
++              result:=operand_read;
++          A_AGHI:
++            if opnr=0 then
++              result:=operand_readwrite
++            else
++              result:=operand_read;
++          else
++            result:=operand_read;
++        end;
++      end;
++
++
++    function spilling_create_load(const ref:treference;r:tregister):Taicpu;
++      begin
++        { the LLVM code generator does its own register allocation }
++        internalerror(2026092720);
++        result:=nil;
++      end;
++
++
++    function spilling_create_store(r:tregister; const ref:treference):Taicpu;
++      begin
++        { the LLVM code generator does its own register allocation }
++        internalerror(2026092721);
++        result:=nil;
++      end;
++
++
++    procedure InitAsm;
++      begin
++      end;
++
++
++    procedure DoneAsm;
++      begin
++      end;
++
++begin
++  cai_align:=tai_align;
++  cai_cpu:=taicpu;
++end.
+diff --git a/compiler/s390x/cgcpu.pas b/compiler/s390x/cgcpu.pas
+new file mode 100644
+index 00000000..0e023f09
+--- /dev/null
++++ b/compiler/s390x/cgcpu.pas
+@@ -0,0 +1,221 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Native code generator stub for s390x
++
++    The s390x port only supports the LLVM code generator. The native code
++    generator is only instantiated for pure assembler routines, which are
++    not supported on s390x.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit cgcpu;
++
++{$i fpcdefs.inc}
++
++interface
++
++    uses
++      globtype,symtype,symdef,
++      cgbase,cgobj,
++      aasmbase,aasmcpu,aasmtai,aasmdata,
++      cpubase,cpuinfo,cgutils,
++      parabase;
++
++    type
++      tcgs390x = class(tcg)
++        procedure init_register_allocators;override;
++        procedure done_register_allocators;override;
++
++
++        procedure a_call_name(list : TAsmList;const s : string; weak: boolean);override;
++        procedure a_call_reg(list : TAsmList;reg : tregister);override;
++
++        procedure a_load_const_reg(list : TAsmList;size : tcgsize;a : tcgint;register : tregister);override;
++        procedure a_load_reg_ref(list : TAsmList;fromsize,tosize : tcgsize;register : tregister;const ref : treference);override;
++        procedure a_load_reg_reg(list : TAsmList;fromsize,tosize : tcgsize;reg1,reg2 : tregister);override;
++        procedure a_load_ref_reg(list : TAsmList;fromsize,tosize : tcgsize;const ref : treference;register : tregister);override;
++        procedure a_loadaddr_ref_reg(list : TAsmList;const ref : treference;r : tregister);override;
++
++        procedure a_loadfpu_reg_reg(list: TAsmList; fromsize, tosize:tcgsize; reg1, reg2: tregister);override;
++        procedure a_loadfpu_ref_reg(list: TAsmList; fromsize, tosize: tcgsize; const ref: treference; reg: tregister);override;
++        procedure a_loadfpu_reg_ref(list: TAsmList; fromsize, tosize: tcgsize; reg: tregister; const ref: treference);override;
++
++        procedure a_op_const_reg(list : TAsmList; Op: TOpCG; size: TCGSize; a: tcgint; reg: TRegister);override;
++        procedure a_op_reg_reg(list : TAsmList; Op: TOpCG; size: TCGSize; reg1, reg2: TRegister);override;
++
++        procedure a_cmp_reg_reg_label(list : TAsmList;size : tcgsize;cmp_op : topcmp;reg1,reg2 : tregister;l : tasmlabel);override;
++        procedure a_jmp_name(list : TAsmList;const s : string);override;
++        procedure a_jmp_always(list : TAsmList;l: tasmlabel);override;
++
++        procedure g_concatcopy(list : TAsmList;const source,dest : treference;len : tcgint);override;
++        procedure g_overflowcheck(list: TAsmList; const Loc:tlocation; def:tdef);override;
++
++        procedure g_proc_entry(list : TAsmList;localsize : longint;nostackframe:boolean);override;
++        procedure g_proc_exit(list : TAsmList;parasize:longint;nostackframe:boolean);override;
++      end;
++
++    procedure create_codegen;
++
++implementation
++
++    uses
++      verbose;
++
++    procedure unsupported;
++      begin
++        { assembler routines are not supported on s390x (LLVM only) }
++        internalerror(2026092730);
++      end;
++
++
++    procedure tcgs390x.init_register_allocators;
++      begin
++        inherited init_register_allocators;
++      end;
++
++
++    procedure tcgs390x.done_register_allocators;
++      begin
++        inherited done_register_allocators;
++      end;
++
++
++
++
++    procedure tcgs390x.a_call_name(list : TAsmList;const s : string; weak: boolean);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_call_reg(list : TAsmList;reg : tregister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_load_const_reg(list : TAsmList;size : tcgsize;a : tcgint;register : tregister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_load_reg_ref(list : TAsmList;fromsize,tosize : tcgsize;register : tregister;const ref : treference);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_load_reg_reg(list : TAsmList;fromsize,tosize : tcgsize;reg1,reg2 : tregister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_load_ref_reg(list : TAsmList;fromsize,tosize : tcgsize;const ref : treference;register : tregister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_loadaddr_ref_reg(list : TAsmList;const ref : treference;r : tregister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_loadfpu_reg_reg(list: TAsmList; fromsize, tosize:tcgsize; reg1, reg2: tregister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_loadfpu_ref_reg(list: TAsmList; fromsize, tosize: tcgsize; const ref: treference; reg: tregister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_loadfpu_reg_ref(list: TAsmList; fromsize, tosize: tcgsize; reg: tregister; const ref: treference);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_op_const_reg(list : TAsmList; Op: TOpCG; size: TCGSize; a: tcgint; reg: TRegister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_op_reg_reg(list : TAsmList; Op: TOpCG; size: TCGSize; reg1, reg2: TRegister);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_cmp_reg_reg_label(list : TAsmList;size : tcgsize;cmp_op : topcmp;reg1,reg2 : tregister;l : tasmlabel);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_jmp_name(list : TAsmList;const s : string);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.a_jmp_always(list : TAsmList;l: tasmlabel);
++      begin
++        unsupported;
++      end;
++
++
++
++
++    procedure tcgs390x.g_concatcopy(list : TAsmList;const source,dest : treference;len : tcgint);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.g_overflowcheck(list: TAsmList; const Loc:tlocation; def:tdef);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.g_proc_entry(list : TAsmList;localsize : longint;nostackframe:boolean);
++      begin
++        unsupported;
++      end;
++
++
++    procedure tcgs390x.g_proc_exit(list : TAsmList;parasize:longint;nostackframe:boolean);
++      begin
++        unsupported;
++      end;
++
++
++    procedure create_codegen;
++      begin
++        cg:=tcgs390x.create;
++      end;
++
++end.
+diff --git a/compiler/s390x/cpubase.pas b/compiler/s390x/cpubase.pas
+new file mode 100644
+index 00000000..857c6a71
+--- /dev/null
++++ b/compiler/s390x/cpubase.pas
+@@ -0,0 +1,365 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Contains the base types for s390x (z/Architecture)
++
++    The s390x port only supports the LLVM code generator. The native code
++    generator types below exist because the generic compiler parts need them;
++    real machine instructions are never emitted by FPC itself.
++
++    Register usage follows the z/OS XPLINK-64 linkage conventions.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit cpubase;
++
++{$i fpcdefs.inc}
++
++interface
++
++uses
++  globtype,
++  cutils,cclasses,aasmbase,cpuinfo,cgbase;
++
++{*****************************************************************************
++                                Assembler Opcodes
++*****************************************************************************}
++
++    type
++      TAsmOp=(A_None,
++        A_NOP,A_BR,A_BASR,A_J,A_BRC,A_BRASL,
++        A_LG,A_STG,A_LGR,A_LGHI,A_LMG,A_STMG,A_LA,A_AGHI
++      );
++
++      { This should define the array of instructions as string }
++      op2strtable=array[tasmop] of string[8];
++
++    Const
++      { First value of opcode enumeration }
++      firstop = low(tasmop);
++      { Last value of opcode enumeration  }
++      lastop  = high(tasmop);
++
++{*****************************************************************************
++                                  Registers
++*****************************************************************************}
++
++    type
++      { Number of registers used for indexing in tables }
++      tregisterindex=0..{$i rs390xnor.inc}-1;
++
++    const
++      maxvarregs = 8;
++      maxfpuvarregs = 8;
++
++      { Available Superregisters }
++      {$i rs390xsup.inc}
++
++      { No Subregisters }
++      R_SUBWHOLE=R_SUBNONE;
++
++      { Available Registers }
++      {$i rs390xcon.inc}
++
++      { Integer Super registers first and last }
++      first_int_imreg = $10;
++
++      { Float Super register first and last }
++      first_fpu_imreg     = $10;
++
++      { MM Super register first and last }
++      first_mm_imreg     = $10;
++
++      regnumber_count_bsstart = 32;
++
++      regnumber_table : array[tregisterindex] of tregister = (
++        {$i rs390xnum.inc}
++      );
++
++      regstabs_table : array[tregisterindex] of shortint = (
++        {$i rs390xsta.inc}
++      );
++
++      regdwarf_table : array[tregisterindex] of shortint = (
++        {$i rs390xdwa.inc}
++      );
++
++{*****************************************************************************
++                                Conditions
++*****************************************************************************}
++
++    type
++      { branch condition masks of BRC }
++      TAsmCond = (C_None { unconditional jumps },
++        C_E,C_NE,C_L,C_LE,C_H,C_HE,C_O,C_NO);
++
++      TAsmConds = set of TAsmCond;
++
++    const
++      cond2str: Array[TAsmCond] of string[2] = ('',
++        'e','ne','l','le','h','he','o','no');
++
++      uppercond2str: Array[TAsmCond] of string[2] = ('',
++        'E','NE','L','LE','H','HE','O','NO');
++
++{*****************************************************************************
++                                   Flags
++*****************************************************************************}
++
++    type
++      TResFlags = (F_E,F_NE,F_L,F_LE,F_H,F_HE);
++
++{*****************************************************************************
++                                 Constants
++*****************************************************************************}
++
++    const
++      max_operands = 4;
++
++      maxintregs = 16;
++      maxfpuregs = 16;
++      maxaddrregs = 0;
++
++{*****************************************************************************
++                                Operand Sizes
++*****************************************************************************}
++
++    type
++      topsize = (S_NO,S_B,S_W,S_L,S_Q,S_FS,S_FL);
++
++{*****************************************************************************
++                          Default generic sizes
++*****************************************************************************}
++
++    const
++      { Defines the default address size for a processor, }
++      OS_ADDR = OS_64;
++      { the natural int size for a processor,
++        has to match osuinttype/ossinttype as initialized in psystem }
++      OS_INT = OS_64;
++      OS_SINT = OS_S64;
++      { the maximum float size for a processor,           }
++      OS_FLOAT = OS_F64;
++      { the size of a vector register for a processor     }
++      OS_VECTOR = OS_M128;
++
++{*****************************************************************************
++                          Generic Register names
++*****************************************************************************}
++
++      { XPLINK-64: R4 is the (biased) stack pointer, R5 the environment
++        (ADA) pointer, R6 the entry point, R7 the return address.
++        Integer results are returned in R3, floating point results in F0. }
++
++      { Stack pointer register }
++      NR_STACK_POINTER_REG = NR_R4;
++      RS_STACK_POINTER_REG = RS_R4;
++      { Frame pointer register }
++      NR_FRAME_POINTER_REG = NR_R8;
++      RS_FRAME_POINTER_REG = RS_R8;
++      { environment (associated data area) }
++      NR_PIC_OFFSET_REG = NR_R5;
++      { Return address of a function }
++      NR_RETURN_ADDRESS_REG = NR_R7;
++      RS_RETURN_ADDRESS_REG = RS_R7;
++      { Results are returned in this register }
++      NR_FUNCTION_RETURN_REG = NR_R3;
++      RS_FUNCTION_RETURN_REG = RS_R3;
++      { The value returned from a function is available in this register }
++      NR_FUNCTION_RESULT_REG = NR_FUNCTION_RETURN_REG;
++      RS_FUNCTION_RESULT_REG = RS_FUNCTION_RETURN_REG;
++
++      NR_FPU_RESULT_REG = NR_F0;
++      NR_MM_RESULT_REG = NR_NO;
++
++      NR_DEFAULTFLAGS = NR_NO;
++      RS_DEFAULTFLAGS = RS_NO;
++
++      { Offset where the parent framepointer is pushed }
++      PARENT_FRAMEPOINTER_OFFSET = 0;
++
++{*****************************************************************************
++                       GCC /ABI linking information
++*****************************************************************************}
++
++      { callee-saved registers of XPLINK-64 }
++      saved_standard_registers : array[0..7] of tsuperregister = (
++        RS_R8,RS_R9,RS_R10,RS_R11,RS_R12,RS_R13,RS_R14,RS_R15
++      );
++
++      { this is only for the generic code which is not used for this architecture }
++      saved_address_registers : array[0..0] of tsuperregister = (RS_INVALID);
++      saved_mm_registers : array[0..0] of tsuperregister = (RS_INVALID);
++
++      { Required parameter alignment when calling a routine declared as
++        stdcall and cdecl. }
++      std_param_align = 8;
++
++{*****************************************************************************
++                                  Helpers
++*****************************************************************************}
++
++    function is_calljmp(o:tasmop):boolean;
++
++    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
++    { Returns the tcgsize corresponding with the size of reg.}
++    function reg_cgsize(const reg: tregister) : tcgsize;
++
++    function findreg_by_number(r:Tregister):tregisterindex;
++    function std_regnum_search(const s:string):Tregister;
++    function std_regname(r:Tregister):string;
++
++    function inverse_cond(const c: TAsmCond): Tasmcond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
++    function dwarf_reg(r:tregister):shortint;
++    function dwarf_reg_no_error(r:tregister):shortint;
++    function eh_return_data_regno(nr: longint): longint;
++
++    function conditions_equal(const c1,c2: TAsmCond): boolean;
++
++    { Checks if Subset is a subset of c (e.g. "less than" is a subset of "less than or equal" }
++    function condition_in(const Subset, c: TAsmCond): Boolean;
++
++implementation
++
++    uses
++      rgbase,verbose;
++
++    const
++      std_regname_table : TRegNameTable = (
++        {$i rs390xstd.inc}
++      );
++
++      regnumber_index : array[tregisterindex] of tregisterindex = (
++        {$i rs390xrni.inc}
++      );
++
++      std_regname_index : array[tregisterindex] of tregisterindex = (
++        {$i rs390xsri.inc}
++      );
++
++
++    function is_calljmp(o:tasmop):boolean;
++      begin
++        case o of
++          A_BR,A_BASR,A_J,A_BRC,A_BRASL:
++            result:=true;
++          else
++            result:=false;
++        end;
++      end;
++
++
++    function inverse_cond(const c: TAsmCond): Tasmcond; {$ifdef USEINLINE}inline;{$endif USEINLINE}
++      const
++        inv_condflags:array[TAsmCond] of TAsmCond=(C_None,
++          C_NE,C_E,C_HE,C_H,C_LE,C_L,C_NO,C_O);
++      begin
++        result := inv_condflags[c];
++      end;
++
++
++    function reg_cgsize(const reg: tregister): tcgsize;
++      begin
++        case getregtype(reg) of
++          R_INTREGISTER :
++            result:=OS_INT;
++          R_MMREGISTER:
++            result:=OS_M128;
++          R_FPUREGISTER:
++            result:=OS_F64;
++          else
++            internalerror(2026092701);
++        end;
++      end;
++
++
++    function cgsize2subreg(regtype: tregistertype; s:Tcgsize):Tsubregister;
++      begin
++        cgsize2subreg:=R_SUBWHOLE;
++      end;
++
++
++    function findreg_by_number(r:Tregister):tregisterindex;
++      begin
++        result:=rgBase.findreg_by_number_table(r,regnumber_index);
++      end;
++
++
++    function std_regnum_search(const s:string):Tregister;
++      begin
++        result:=regnumber_table[findreg_by_name_table(s,std_regname_table,std_regname_index)];
++      end;
++
++
++    function std_regname(r:Tregister):string;
++      var
++        p : tregisterindex;
++      begin
++        p:=findreg_by_number_table(r,regnumber_index);
++        if p<>0 then
++          result:=std_regname_table[p]
++        else
++          result:=generic_regname(r);
++      end;
++
++
++    function dwarf_reg(r:tregister):shortint;
++      begin
++        result:=regdwarf_table[findreg_by_number(r)];
++        if result=-1 then
++          internalerror(2026092702);
++      end;
++
++
++    function dwarf_reg_no_error(r:tregister):shortint;
++      begin
++        result:=regdwarf_table[findreg_by_number(r)];
++      end;
++
++
++    function eh_return_data_regno(nr: longint): longint;
++      begin
++        if (nr>=0) and (nr<2) then
++          result:=nr+6
++        else
++          result:=-1;
++      end;
++
++
++    function conditions_equal(const c1, c2: TAsmCond): boolean;
++      begin
++        result:=c1=c2;
++      end;
++
++
++    function condition_in(const Subset, c: TAsmCond): Boolean;
++      begin
++        Result := (c = C_None) or conditions_equal(Subset, c);
++        if not Result then
++          case Subset of
++            C_E:
++              Result := (c in [C_LE, C_HE]);
++            C_L:
++              Result := (c in [C_LE, C_NE]);
++            C_H:
++              Result := (c in [C_HE, C_NE]);
++            else
++              Result := False;
++          end;
++      end;
++
++end.
+diff --git a/compiler/s390x/cpuinfo.pas b/compiler/s390x/cpuinfo.pas
+new file mode 100644
+index 00000000..3d34fb1e
+--- /dev/null
++++ b/compiler/s390x/cpuinfo.pas
+@@ -0,0 +1,162 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Basic Processor information for s390x (z/Architecture)
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++Unit CPUInfo;
++
++{$i fpcdefs.inc}
++
++Interface
++
++  uses
++    globtype;
++
++Type
++   bestreal = double;
++{$if FPC_FULLVERSION>20700}
++   bestrealrec = TDoubleRec;
++{$endif FPC_FULLVERSION>20700}
++   ts32real = single;
++   ts64real = double;
++   ts80real = type extended;
++   ts128real = type extended;
++   ts64comp = comp;
++
++   pbestreal=^bestreal;
++
++   { possible supported processors for this target
++     (named after the LLVM -march values) }
++   tcputype =
++      (cpu_none,
++       cpu_z10,
++       cpu_z196,
++       cpu_zEC12,
++       cpu_z13,
++       cpu_z14,
++       cpu_z15,
++       cpu_z16,
++       cpu_z17
++      );
++
++   tfputype =
++     (fpu_none,
++      fpu_ieee
++     );
++
++   tcontrollertype =
++     (ct_none
++     );
++
++   tcontrollerdatatype = record
++      controllertypestr, controllerunitstr: string[20];
++      cputype: tcputype; fputype: tfputype;
++      flashbase, flashsize, srambase, sramsize, eeprombase, eepromsize, bootbase, bootsize: dword;
++   end;
++
++Const
++   fputypestrllvm : array[tfputype] of string[6] = ('',
++     ''
++   );
++
++   { Is there support for dealing with multiple microcontrollers available }
++   { for this platform? }
++   ControllerSupport = false;
++
++   { Size of native extended floating point type }
++   extended_size = 8;
++
++   { target cpu string (used by compiler options) }
++   target_cpu_string = 's390x';
++
++   embedded_controllers : array [tcontrollertype] of tcontrollerdatatype =
++   (
++      (controllertypestr:''; controllerunitstr:''; cputype:cpu_none; fputype:fpu_none; flashbase:0; flashsize:0; srambase:0; sramsize:0; eeprombase:0; eepromsize:0; bootbase:0; bootsize:0)
++   );
++
++var
++   { calling conventions supported by the code generator }
++   supported_calling_conventions : tproccalloptions = [
++     pocall_internproc,
++     pocall_safecall,
++     pocall_stdcall,
++     { same as stdcall only different name mangling }
++     pocall_cdecl,
++     { same as stdcall only different name mangling }
++     pocall_cppdecl,
++     { same as stdcall (requires that all const records are passed by
++       reference, but that's already done for stdcall) }
++     pocall_mwpascal
++   ];
++
++const
++   cputypestr : array[tcputype] of string[5] = ('',
++     'z10',
++     'z196',
++     'zEC12',
++     'z13',
++     'z14',
++     'z15',
++     'z16',
++     'z17'
++   );
++
++   fputypestr : array[tfputype] of string[4] = ('',
++     'IEEE'
++   );
++
++   { Supported optimizations, only used for information }
++   supported_optimizerswitches = genericlevel1optimizerswitches+
++                                 genericlevel2optimizerswitches+
++                                 genericlevel3optimizerswitches-
++                                 { no need to write info about those }
++                                 [cs_opt_level1,cs_opt_level2,cs_opt_level3]+
++                                 [cs_opt_loopunroll,cs_opt_tailrecursion,
++                                  cs_opt_nodecse,cs_opt_reorder_fields,cs_opt_fastmath];
++
++   level1optimizerswitches = genericlevel1optimizerswitches;
++   level2optimizerswitches = genericlevel2optimizerswitches + level1optimizerswitches +
++     [cs_opt_stackframe,cs_opt_tailrecursion,cs_opt_nodecse,cs_opt_consts];
++   level3optimizerswitches = genericlevel3optimizerswitches + level2optimizerswitches;
++   level4optimizerswitches = genericlevel4optimizerswitches + level3optimizerswitches + [];
++
++type
++   tcpuflags =
++     (CPUS390X_HAS_VECTOR       { vector facility (z13 and later) }
++     );
++
++   tfpuflags =
++     (CPUS390X_HAS_BFP          { binary floating point }
++     );
++
++var
++   cpu_capabilities : array[tcputype] of set of tcpuflags =
++     ( { cpu_none  } [],
++       { cpu_z10   } [],
++       { cpu_z196  } [],
++       { cpu_zEC12 } [],
++       { cpu_z13   } [CPUS390X_HAS_VECTOR],
++       { cpu_z14   } [CPUS390X_HAS_VECTOR],
++       { cpu_z15   } [CPUS390X_HAS_VECTOR],
++       { cpu_z16   } [CPUS390X_HAS_VECTOR],
++       { cpu_z17   } [CPUS390X_HAS_VECTOR]
++     );
++
++const
++   fpu_capabilities : array[tfputype] of set of tfpuflags =
++     ( { fpu_none } [],
++       { fpu_ieee } [CPUS390X_HAS_BFP]
++     );
++
++Implementation
++
++end.
+diff --git a/compiler/s390x/cpunode.pas b/compiler/s390x/cpunode.pas
+new file mode 100644
+index 00000000..5422a560
+--- /dev/null
++++ b/compiler/s390x/cpunode.pas
+@@ -0,0 +1,44 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Includes the s390x code generator nodes
++
++    The s390x port only supports the LLVM code generator, so only the
++    generic and the LLVM nodes are included.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit cpunode;
++
++{$i fpcdefs.inc}
++
++interface
++
++implementation
++
++uses
++  ncgbas,ncgflw,ncgcal,ncgcnv,ncgld,ncgmem,ncgcon,ncgset,ncginl,ncgobjc,
++  symcpu,
++  aasmdef
++{$ifndef llvm}
++  {$fatal The s390x code generator only supports LLVM, build with LLVM=1}
++{$else llvm}
++  ,llvmnode
++{$endif llvm}
++  ;
++
++end.
+diff --git a/compiler/s390x/cpupara.pas b/compiler/s390x/cpupara.pas
+new file mode 100644
+index 00000000..856f2396
+--- /dev/null
++++ b/compiler/s390x/cpupara.pas
+@@ -0,0 +1,508 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Calling conventions for s390x on z/OS (XPLINK-64)
++
++    Only the LLVM code generator is supported for s390x. LLVM assigns the
++    actual registers and argument area slots; the parameter manager has to
++    decompose parameters the same way clang does (see ZOSXPLinkABIInfo in
++    clang/lib/CodeGen/Targets/SystemZ.cpp), so that Pascal code and C code
++    can call each other:
++
++      - integers smaller than 64 bits are sign/zero extended to 64 bits
++      - floating point values are passed in FPR 0, 2, 4, 6 (named parameters
++        only, varargs floating point values are passed like integers)
++      - records are passed by value as a sequence of 64 bit integers
++        (records consisting of two floating point fields of the same type
++         as two floating point values)
++      - the first three 64 bit slots are passed in GPR 1-3, the remaining
++        ones in the argument area
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit cpupara;
++
++{$i fpcdefs.inc}
++
++  interface
++
++    uses
++      globtype,
++      aasmdata,
++      symconst,symtype,symdef,
++      cgbase,cgutils,
++      parabase,paramgr;
++
++    type
++      tcpuparamanager = class(tparamanager)
++        function get_volatile_registers_int(calloption: tproccalloption): tcpuregisterset; override;
++        function get_volatile_registers_fpu(calloption: tproccalloption): tcpuregisterset; override;
++        function get_saved_registers_int(calloption: tproccalloption): tcpuregisterarray; override;
++        function get_saved_registers_fpu(calloption: tproccalloption): tcpuregisterarray; override;
++        function push_addr_param(varspez: tvarspez; def: tdef; calloption: tproccalloption): boolean; override;
++        function get_funcretloc(p: tabstractprocdef; side: tcallercallee; forcetempdef: tdef): tcgpara; override;
++        procedure getcgtempparaloc(list: TAsmList; pd: tabstractprocdef; nr: longint; var cgpara: tcgpara); override;
++        function create_paraloc_info(p: tabstractprocdef; side: tcallercallee): longint; override;
++        function create_varargs_paraloc_info(p: tabstractprocdef; side: tcallercallee; varargspara: tvarargsparalist): longint; override;
++      private
++        procedure init_values(out curintreg, curfloatreg: tsuperregister; out cur_stack_offset: aword);
++        function create_paraloc_info_intern(p: tabstractprocdef; side: tcallercallee; paras: tparalist;
++          var curintreg, curfloatreg: tsuperregister; var cur_stack_offset: aword; isvararg: boolean): longint;
++        procedure create_paraloc_for_def(var para: tcgpara; varspez: tvarspez; paradef: tdef;
++          var nextintreg, nextfloatreg: tsuperregister; var stack_offset: aword;
++          isvararg: boolean; side: tcallercallee; p: tabstractprocdef);
++      end;
++
++  implementation
++
++    uses
++      verbose,
++      globals,
++      systems,
++      cpuinfo,
++      symsym,
++      symtable,
++      defutil,
++      cpubase;
++
++    const
++      { GPR 1-3 carry the first three argument slots }
++      last_int_param_reg = RS_R3;
++      { FPR 0, 2, 4, 6 carry the first four floating point arguments }
++      last_float_param_reg = RS_F6;
++
++
++    function tcpuparamanager.get_volatile_registers_int(calloption: tproccalloption): tcpuregisterset;
++      begin
++        result:=[RS_R0..RS_R7];
++      end;
++
++
++    function tcpuparamanager.get_volatile_registers_fpu(calloption: tproccalloption): tcpuregisterset;
++      begin
++        result:=[RS_F0..RS_F7];
++      end;
++
++
++    function tcpuparamanager.get_saved_registers_int(calloption: tproccalloption): tcpuregisterarray;
++      const
++        saved_regs: tcpuregisterarray = (RS_R8,RS_R9,RS_R10,RS_R11,RS_R12,RS_R13,RS_R14,RS_R15);
++      begin
++        result:=saved_regs;
++      end;
++
++
++    function tcpuparamanager.get_saved_registers_fpu(calloption: tproccalloption): tcpuregisterarray;
++      const
++        saved_regs: tcpuregisterarray = (RS_F8,RS_F9,RS_F10,RS_F11,RS_F12,RS_F13,RS_F14,RS_F15);
++      begin
++        result:=saved_regs;
++      end;
++
++
++    function tcpuparamanager.push_addr_param(varspez: tvarspez; def: tdef; calloption: tproccalloption): boolean;
++      begin
++        result:=false;
++        { var,out,constref always require address }
++        if varspez in [vs_var,vs_out,vs_constref] then
++          begin
++            result:=true;
++            exit;
++          end;
++        case def.typ of
++          variantdef,
++          formaldef:
++            result:=true;
++          { "procedure of object" must be interchangeable with a TMethod
++            record, so procvars are treated like records }
++          procvardef,
++          recorddef:
++            { C passes records by value; Pascal passes const records by
++              reference and small value records by value }
++            if calloption in cdecl_pocalls then
++              result:=false
++            else
++              result:=(varspez=vs_const) or not(def.size in [0..3*sizeof(aint)]);
++          arraydef:
++            { C arrays are always passed by reference }
++            result:=(tarraydef(def).highrange>=tarraydef(def).lowrange) or
++                    is_open_array(def) or
++                    is_array_of_const(def) or
++                    is_array_constructor(def);
++          objectdef:
++            result:=is_object(def);
++          setdef:
++            result:=not is_smallset(def);
++          stringdef:
++            result:=tstringdef(def).stringtype in [st_shortstring,st_longstring];
++          else
++            ;
++        end;
++      end;
++
++
++    procedure tcpuparamanager.init_values(out curintreg, curfloatreg: tsuperregister; out cur_stack_offset: aword);
++      begin
++        curintreg:=RS_R1;
++        curfloatreg:=RS_F0;
++        cur_stack_offset:=0;
++      end;
++
++
++    function tcpuparamanager.get_funcretloc(p: tabstractprocdef; side: tcallercallee; forcetempdef: tdef): tcgpara;
++      var
++        paraloc: pcgparalocation;
++        retcgsize: tcgsize;
++      begin
++        if set_common_funcretloc_info(p,forcetempdef,retcgsize,result) then
++          exit;
++        paraloc:=result.add_location;
++        if (result.def.typ=floatdef) then
++          begin
++            paraloc^.loc:=LOC_FPUREGISTER;
++            paraloc^.register:=NR_FPU_RESULT_REG;
++            paraloc^.size:=retcgsize;
++            paraloc^.def:=result.def;
++          end
++        else
++          begin
++            paraloc^.loc:=LOC_REGISTER;
++            paraloc^.register:=NR_FUNCTION_RETURN_REG;
++            { integer results are extended to 64 bits }
++            if is_ordinal(result.def) and (result.def.size<8) then
++              begin
++                if is_signed(result.def) then
++                  begin
++                    paraloc^.size:=OS_S64;
++                    paraloc^.def:=s64inttype;
++                  end
++                else
++                  begin
++                    paraloc^.size:=OS_64;
++                    paraloc^.def:=u64inttype;
++                  end;
++              end
++            else
++              begin
++                paraloc^.size:=retcgsize;
++                paraloc^.def:=result.def;
++              end;
++          end;
++      end;
++
++
++    procedure tcpuparamanager.getcgtempparaloc(list: TAsmList; pd: tabstractprocdef; nr: longint; var cgpara: tcgpara);
++      var
++        paraloc: pcgparalocation;
++        psym: tparavarsym;
++        pdef: tdef;
++      begin
++        psym:=tparavarsym(pd.paras[nr-1]);
++        pdef:=psym.vardef;
++        if push_addr_param(psym.varspez,pdef,pd.proccalloption) then
++          pdef:=cpointerdef.getreusable_no_free(pdef);
++        cgpara.reset;
++        cgpara.size:=def_cgsize(pdef);
++        cgpara.intsize:=tcgsize2size[cgpara.size];
++        cgpara.alignment:=get_para_align(pd.proccalloption);
++        cgpara.def:=pdef;
++        paraloc:=cgpara.add_location;
++        with paraloc^ do
++          begin
++            size:=def_cgsize(pdef);
++            def:=pdef;
++            if nr<=3 then
++              begin
++                loc:=LOC_REGISTER;
++                register:=newreg(R_INTREGISTER,RS_R1+nr-1,R_SUBWHOLE);
++              end
++            else
++              begin
++                loc:=LOC_REFERENCE;
++                reference.index:=NR_STACK_POINTER_REG;
++                reference.offset:=sizeof(pint)*(nr-1);
++              end;
++          end;
++      end;
++
++
++    function tcpuparamanager.create_paraloc_info(p: tabstractprocdef; side: tcallercallee): longint;
++      var
++        cur_stack_offset: aword;
++        curintreg, curfloatreg: tsuperregister;
++      begin
++        init_values(curintreg,curfloatreg,cur_stack_offset);
++        result:=create_paraloc_info_intern(p,side,p.paras,curintreg,curfloatreg,cur_stack_offset,false);
++        create_funcretloc_info(p,side);
++      end;
++
++
++    function tcpuparamanager.create_varargs_paraloc_info(p: tabstractprocdef; side: tcallercallee; varargspara: tvarargsparalist): longint;
++      var
++        cur_stack_offset: aword;
++        curintreg, curfloatreg: tsuperregister;
++      begin
++        init_values(curintreg,curfloatreg,cur_stack_offset);
++        result:=create_paraloc_info_intern(p,side,p.paras,curintreg,curfloatreg,cur_stack_offset,false);
++        if (p.proccalloption in cstylearrayofconst) then
++          begin
++            if assigned(varargspara) then
++              begin
++                if side=callerside then
++                  result:=create_paraloc_info_intern(p,side,varargspara,curintreg,curfloatreg,cur_stack_offset,true)
++                else
++                  internalerror(2026092710);
++              end;
++          end
++        else
++          internalerror(2026092711);
++        create_funcretloc_info(p,side);
++      end;
++
++
++    function tcpuparamanager.create_paraloc_info_intern(p: tabstractprocdef; side: tcallercallee; paras: tparalist;
++      var curintreg, curfloatreg: tsuperregister; var cur_stack_offset: aword; isvararg: boolean): longint;
++      var
++        i: longint;
++        hp: tparavarsym;
++        paraloc: pcgparalocation;
++      begin
++        for i:=0 to paras.count-1 do
++          begin
++            hp:=tparavarsym(paras[i]);
++            if (vo_has_explicit_paraloc in hp.varoptions) then
++              internalerror(2026092712);
++            { C-style array of const: handled by the varargs code }
++            if (p.proccalloption in cstylearrayofconst) and
++               is_array_of_const(hp.vardef) then
++              begin
++                paraloc:=hp.paraloc[side].add_location;
++                { hack: the paraloc must be valid, but is not actually used }
++                paraloc^.loc:=LOC_REGISTER;
++                paraloc^.register:=NR_R1;
++                paraloc^.size:=OS_ADDR;
++                paraloc^.def:=voidpointertype;
++                break;
++              end;
++            create_paraloc_for_def(hp.paraloc[side],hp.varspez,hp.vardef,
++              curintreg,curfloatreg,cur_stack_offset,isvararg,side,p);
++          end;
++        result:=cur_stack_offset;
++      end;
++
++
++    { returns the floating point type if def is a record with exactly two
++      floating point fields of the same type ("complex-like" in XPLINK) }
++    function complex_like_float_type(def: tdef): tdef;
++      var
++        i, count: longint;
++        sym: tsym;
++        fdef: tdef;
++      begin
++        result:=nil;
++        if (def.typ<>recorddef) then
++          exit;
++        count:=0;
++        fdef:=nil;
++        for i:=0 to tabstractrecorddef(def).symtable.symlist.count-1 do
++          begin
++            sym:=tsym(tabstractrecorddef(def).symtable.symlist[i]);
++            if (sym.typ<>fieldvarsym) or
++               (sp_static in sym.symoptions) then
++              continue;
++            inc(count);
++            if (tfieldvarsym(sym).vardef.typ<>floatdef) or
++               (count>2) then
++              exit;
++            if not assigned(fdef) then
++              fdef:=tfieldvarsym(sym).vardef
++            else if tfloatdef(fdef).floattype<>tfloatdef(tfieldvarsym(sym).vardef).floattype then
++              exit;
++          end;
++        if (count=2) and
++           (def.size=2*fdef.size) and
++           (tfloatdef(fdef).floattype in [s32real,s64real]) then
++          result:=fdef;
++      end;
++
++
++    procedure tcpuparamanager.create_paraloc_for_def(var para: tcgpara; varspez: tvarspez; paradef: tdef;
++      var nextintreg, nextfloatreg: tsuperregister; var stack_offset: aword;
++      isvararg: boolean; side: tcallercallee; p: tabstractprocdef);
++
++      procedure add_int_loc(size: tcgsize; def: tdef);
++        var
++          paraloc: pcgparalocation;
++        begin
++          paraloc:=para.add_location;
++          paraloc^.size:=size;
++          paraloc^.def:=def;
++          if nextintreg<=last_int_param_reg then
++            begin
++              paraloc^.loc:=LOC_REGISTER;
++              paraloc^.register:=newreg(R_INTREGISTER,nextintreg,R_SUBWHOLE);
++              inc(nextintreg);
++            end
++          else
++            begin
++              paraloc^.loc:=LOC_REFERENCE;
++              if side=callerside then
++                paraloc^.reference.index:=NR_STACK_POINTER_REG
++              else
++                paraloc^.reference.index:=NR_FRAME_POINTER_REG;
++              paraloc^.reference.offset:=stack_offset;
++            end;
++          inc(stack_offset,8);
++        end;
++
++      procedure add_float_loc(def: tdef);
++        var
++          paraloc: pcgparalocation;
++        begin
++          paraloc:=para.add_location;
++          paraloc^.size:=def_cgsize(def);
++          paraloc^.def:=def;
++          if nextfloatreg<=last_float_param_reg then
++            begin
++              paraloc^.loc:=LOC_FPUREGISTER;
++              paraloc^.register:=newreg(R_FPUREGISTER,nextfloatreg,R_SUBWHOLE);
++              inc(nextfloatreg,2);
++            end
++          else
++            begin
++              paraloc^.loc:=LOC_REFERENCE;
++              if side=callerside then
++                paraloc^.reference.index:=NR_STACK_POINTER_REG
++              else
++                paraloc^.reference.index:=NR_FRAME_POINTER_REG;
++              paraloc^.reference.offset:=stack_offset;
++            end;
++          { a floating point argument occupies an argument slot as well; the
++            corresponding GPR is skipped }
++          if nextintreg<=last_int_param_reg then
++            inc(nextintreg);
++          inc(stack_offset,8);
++        end;
++
++      var
++        paralen: aint;
++        fdef: tdef;
++        paraloc: pcgparalocation;
++      begin
++        para.reset;
++        para.alignment:=std_param_align;
++
++        if push_addr_param(varspez,paradef,p.proccalloption) then
++          begin
++            paradef:=cpointerdef.getreusable_no_free(paradef);
++            para.size:=OS_ADDR;
++            para.intsize:=sizeof(pint);
++            para.def:=paradef;
++            add_int_loc(OS_ADDR,paradef);
++            exit;
++          end;
++
++        if not is_special_array(paradef) then
++          paralen:=paradef.size
++        else
++          paralen:=tcgsize2size[def_cgsize(paradef)];
++        para.def:=paradef;
++        para.intsize:=paralen;
++        para.size:=def_cgsize(paradef);
++
++        { empty records }
++        if (paralen=0) and
++           (paradef.typ=recorddef) then
++          begin
++            paraloc:=para.add_location;
++            paraloc^.loc:=LOC_VOID;
++            exit;
++          end;
++
++        case paradef.typ of
++          floatdef:
++            begin
++              case tfloatdef(paradef).floattype of
++                s32real,s64real:
++                  if isvararg then
++                    { varargs: floating point values are passed like integers }
++                    add_int_loc(OS_64,u64inttype)
++                  else
++                    add_float_loc(paradef);
++                s64currency,s64comp:
++                  add_int_loc(OS_S64,s64inttype);
++                else
++                  internalerror(2026092713);
++              end;
++            end;
++          recorddef,
++          arraydef,
++          setdef,
++          stringdef,
++          procvardef,
++          objectdef,
++          variantdef:
++            begin
++              fdef:=complex_like_float_type(paradef);
++              if assigned(fdef) and not isvararg then
++                begin
++                  add_float_loc(fdef);
++                  add_float_loc(fdef);
++                end
++              else if is_ordinal(paradef) or
++                      (paradef.typ in [procvardef,objectdef,stringdef]) and (paralen=sizeof(pint)) and
++                      not(paradef.typ=procvardef) or
++                      ((paradef.typ=procvardef) and tprocvardef(paradef).is_addressonly) then
++                add_int_loc(OS_ADDR,paradef)
++              else
++                begin
++                  { passed by value as a sequence of 64 bit integers }
++                  para.size:=OS_NO;
++                  while paralen>0 do
++                    begin
++                      add_int_loc(OS_64,u64inttype);
++                      dec(paralen,8);
++                    end;
++                end;
++            end;
++          orddef,
++          enumdef:
++            begin
++              if paralen>8 then
++                begin
++                  { 128 bit integers }
++                  para.size:=OS_NO;
++                  while paralen>0 do
++                    begin
++                      add_int_loc(OS_64,u64inttype);
++                      dec(paralen,8);
++                    end;
++                end
++              else if is_signed(paradef) then
++                add_int_loc(OS_S64,s64inttype)
++              else
++                add_int_loc(OS_64,u64inttype);
++            end;
++          else
++            { pointers, class references, formal parameters, ... }
++            add_int_loc(OS_ADDR,paradef);
++        end;
++      end;
++
++begin
++  paramanager:=tcpuparamanager.create;
++end.
+diff --git a/compiler/s390x/cpupi.pas b/compiler/s390x/cpupi.pas
+new file mode 100644
+index 00000000..76e71cb5
+--- /dev/null
++++ b/compiler/s390x/cpupi.pas
+@@ -0,0 +1,59 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    This unit contains the CPU specific part of tprocinfo
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit cpupi;
++
++{$i fpcdefs.inc}
++
++interface
++
++  uses
++    procinfo,
++    psub;
++
++  type
++    { stack frames are laid out by LLVM }
++    tcpuprocinfo=class(tcgprocinfo)
++      constructor create(aparent: tprocinfo); override;
++      procedure set_first_temp_offset; override;
++    end;
++
++implementation
++
++  uses
++    tgobj,
++    cpubase;
++
++  constructor tcpuprocinfo.create(aparent: tprocinfo);
++    begin
++      inherited create(aparent);
++      framepointer:=NR_STACK_POINTER_REG;
++    end;
++
++
++  procedure tcpuprocinfo.set_first_temp_offset;
++    begin
++      tg.setfirsttemp(0);
++    end;
++
++begin
++  cprocinfo:=tcpuprocinfo;
++end.
+diff --git a/compiler/s390x/cputarg.pas b/compiler/s390x/cputarg.pas
+new file mode 100644
+index 00000000..e50d7bf2
+--- /dev/null
++++ b/compiler/s390x/cputarg.pas
+@@ -0,0 +1,54 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Includes the s390x dependent target units
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit cputarg;
++
++{$i fpcdefs.inc}
++
++interface
++
++
++implementation
++
++    uses
++      systems { prevent a syntax error when nothing is included }
++
++{**************************************
++             Targets
++**************************************}
++
++    {$ifndef NOTARGETZOS}
++      ,t_zos
++    {$endif}
++
++{**************************************
++             Assemblers
++**************************************}
++
++      { only the LLVM assembler (clang), see llvmtarg }
++
++{**************************************
++             Debuginfo
++**************************************}
++
++      ;
++
++end.
+diff --git a/compiler/s390x/hlcgcpu.pas b/compiler/s390x/hlcgcpu.pas
+new file mode 100644
+index 00000000..a94c2c29
+--- /dev/null
++++ b/compiler/s390x/hlcgcpu.pas
+@@ -0,0 +1,63 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    High level code generator for s390x
++
++    Only used by the LLVM code generator for pure assembler routines,
++    which are not supported on s390x.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit hlcgcpu;
++
++{$i fpcdefs.inc}
++
++interface
++
++  uses
++    aasmdata,symdef,
++    hlcgobj, hlcg2ll;
++
++  type
++    thlcgs390x = class(thlcg2ll)
++      procedure g_intf_wrapper(list: TAsmList; procdef: tprocdef; const labelname: string; ioffset: longint);override;
++    end;
++
++  procedure create_hlcodegen_cpu(hlcgobjhelpers: thlcgobjhelpersclass);
++
++implementation
++
++  uses
++    verbose,
++    cgcpu;
++
++  procedure thlcgs390x.g_intf_wrapper(list: TAsmList; procdef: tprocdef; const labelname: string; ioffset: longint);
++    begin
++      { interface wrappers are generated by the LLVM code generator }
++      internalerror(2026092731);
++    end;
++
++  procedure create_hlcodegen_cpu(hlcgobjhelpers: thlcgobjhelpersclass);
++    begin
++      hlcg:=thlcgs390x.create(hlcgobjhelpers);
++      create_codegen;
++    end;
++
++begin
++  chlcgobj:=thlcgs390x;
++  create_hlcodegen:=@create_hlcodegen_cpu;
++end.
+diff --git a/compiler/s390x/rs390xcon.inc b/compiler/s390x/rs390xcon.inc
+new file mode 100644
+index 00000000..afa83965
+--- /dev/null
++++ b/compiler/s390x/rs390xcon.inc
+@@ -0,0 +1,34 @@
++{ don't edit, this file is generated from s390xreg.dat }
++NR_NO = tregister($00000000);
++NR_R0 = tregister($01000000);
++NR_R1 = tregister($01000001);
++NR_R2 = tregister($01000002);
++NR_R3 = tregister($01000003);
++NR_R4 = tregister($01000004);
++NR_R5 = tregister($01000005);
++NR_R6 = tregister($01000006);
++NR_R7 = tregister($01000007);
++NR_R8 = tregister($01000008);
++NR_R9 = tregister($01000009);
++NR_R10 = tregister($0100000a);
++NR_R11 = tregister($0100000b);
++NR_R12 = tregister($0100000c);
++NR_R13 = tregister($0100000d);
++NR_R14 = tregister($0100000e);
++NR_R15 = tregister($0100000f);
++NR_F0 = tregister($02000000);
++NR_F1 = tregister($02000001);
++NR_F2 = tregister($02000002);
++NR_F3 = tregister($02000003);
++NR_F4 = tregister($02000004);
++NR_F5 = tregister($02000005);
++NR_F6 = tregister($02000006);
++NR_F7 = tregister($02000007);
++NR_F8 = tregister($02000008);
++NR_F9 = tregister($02000009);
++NR_F10 = tregister($0200000a);
++NR_F11 = tregister($0200000b);
++NR_F12 = tregister($0200000c);
++NR_F13 = tregister($0200000d);
++NR_F14 = tregister($0200000e);
++NR_F15 = tregister($0200000f);
+diff --git a/compiler/s390x/rs390xdwa.inc b/compiler/s390x/rs390xdwa.inc
+new file mode 100644
+index 00000000..a2e748fc
+--- /dev/null
++++ b/compiler/s390x/rs390xdwa.inc
+@@ -0,0 +1,34 @@
++{ don't edit, this file is generated from s390xreg.dat }
++-1,
++0,
++1,
++2,
++3,
++4,
++5,
++6,
++7,
++8,
++9,
++10,
++11,
++12,
++13,
++14,
++15,
++16,
++20,
++17,
++21,
++18,
++22,
++19,
++23,
++24,
++28,
++25,
++29,
++26,
++30,
++27,
++31
+diff --git a/compiler/s390x/rs390xnor.inc b/compiler/s390x/rs390xnor.inc
+new file mode 100644
+index 00000000..a8528cbf
+--- /dev/null
++++ b/compiler/s390x/rs390xnor.inc
+@@ -0,0 +1,2 @@
++{ don't edit, this file is generated from s390xreg.dat }
++33
+diff --git a/compiler/s390x/rs390xnum.inc b/compiler/s390x/rs390xnum.inc
+new file mode 100644
+index 00000000..e50c7b37
+--- /dev/null
++++ b/compiler/s390x/rs390xnum.inc
+@@ -0,0 +1,34 @@
++{ don't edit, this file is generated from s390xreg.dat }
++tregister($00000000),
++tregister($01000000),
++tregister($01000001),
++tregister($01000002),
++tregister($01000003),
++tregister($01000004),
++tregister($01000005),
++tregister($01000006),
++tregister($01000007),
++tregister($01000008),
++tregister($01000009),
++tregister($0100000a),
++tregister($0100000b),
++tregister($0100000c),
++tregister($0100000d),
++tregister($0100000e),
++tregister($0100000f),
++tregister($02000000),
++tregister($02000001),
++tregister($02000002),
++tregister($02000003),
++tregister($02000004),
++tregister($02000005),
++tregister($02000006),
++tregister($02000007),
++tregister($02000008),
++tregister($02000009),
++tregister($0200000a),
++tregister($0200000b),
++tregister($0200000c),
++tregister($0200000d),
++tregister($0200000e),
++tregister($0200000f)
+diff --git a/compiler/s390x/rs390xrni.inc b/compiler/s390x/rs390xrni.inc
+new file mode 100644
+index 00000000..4ed7113b
+--- /dev/null
++++ b/compiler/s390x/rs390xrni.inc
+@@ -0,0 +1,34 @@
++{ don't edit, this file is generated from s390xreg.dat }
++0,
++1,
++2,
++3,
++4,
++5,
++6,
++7,
++8,
++9,
++10,
++11,
++12,
++13,
++14,
++15,
++16,
++17,
++18,
++19,
++20,
++21,
++22,
++23,
++24,
++25,
++26,
++27,
++28,
++29,
++30,
++31,
++32
+diff --git a/compiler/s390x/rs390xsri.inc b/compiler/s390x/rs390xsri.inc
+new file mode 100644
+index 00000000..51aedaf1
+--- /dev/null
++++ b/compiler/s390x/rs390xsri.inc
+@@ -0,0 +1,34 @@
++{ don't edit, this file is generated from s390xreg.dat }
++0,
++17,
++18,
++27,
++28,
++29,
++30,
++31,
++32,
++19,
++20,
++21,
++22,
++23,
++24,
++25,
++26,
++1,
++2,
++11,
++12,
++13,
++14,
++15,
++16,
++3,
++4,
++5,
++6,
++7,
++8,
++9,
++10
+diff --git a/compiler/s390x/rs390xsta.inc b/compiler/s390x/rs390xsta.inc
+new file mode 100644
+index 00000000..a2e748fc
+--- /dev/null
++++ b/compiler/s390x/rs390xsta.inc
+@@ -0,0 +1,34 @@
++{ don't edit, this file is generated from s390xreg.dat }
++-1,
++0,
++1,
++2,
++3,
++4,
++5,
++6,
++7,
++8,
++9,
++10,
++11,
++12,
++13,
++14,
++15,
++16,
++20,
++17,
++21,
++18,
++22,
++19,
++23,
++24,
++28,
++25,
++29,
++26,
++30,
++27,
++31
+diff --git a/compiler/s390x/rs390xstd.inc b/compiler/s390x/rs390xstd.inc
+new file mode 100644
+index 00000000..d8c7bb0d
+--- /dev/null
++++ b/compiler/s390x/rs390xstd.inc
+@@ -0,0 +1,34 @@
++{ don't edit, this file is generated from s390xreg.dat }
++'INVALID',
++'r0',
++'r1',
++'r2',
++'r3',
++'r4',
++'r5',
++'r6',
++'r7',
++'r8',
++'r9',
++'r10',
++'r11',
++'r12',
++'r13',
++'r14',
++'r15',
++'f0',
++'f1',
++'f2',
++'f3',
++'f4',
++'f5',
++'f6',
++'f7',
++'f8',
++'f9',
++'f10',
++'f11',
++'f12',
++'f13',
++'f14',
++'f15'
+diff --git a/compiler/s390x/rs390xsup.inc b/compiler/s390x/rs390xsup.inc
+new file mode 100644
+index 00000000..a3ec7a92
+--- /dev/null
++++ b/compiler/s390x/rs390xsup.inc
+@@ -0,0 +1,34 @@
++{ don't edit, this file is generated from s390xreg.dat }
++RS_NO = $00;
++RS_R0 = $00;
++RS_R1 = $01;
++RS_R2 = $02;
++RS_R3 = $03;
++RS_R4 = $04;
++RS_R5 = $05;
++RS_R6 = $06;
++RS_R7 = $07;
++RS_R8 = $08;
++RS_R9 = $09;
++RS_R10 = $0a;
++RS_R11 = $0b;
++RS_R12 = $0c;
++RS_R13 = $0d;
++RS_R14 = $0e;
++RS_R15 = $0f;
++RS_F0 = $00;
++RS_F1 = $01;
++RS_F2 = $02;
++RS_F3 = $03;
++RS_F4 = $04;
++RS_F5 = $05;
++RS_F6 = $06;
++RS_F7 = $07;
++RS_F8 = $08;
++RS_F9 = $09;
++RS_F10 = $0a;
++RS_F11 = $0b;
++RS_F12 = $0c;
++RS_F13 = $0d;
++RS_F14 = $0e;
++RS_F15 = $0f;
+diff --git a/compiler/s390x/s390xreg.dat b/compiler/s390x/s390xreg.dat
+new file mode 100644
+index 00000000..a10eff30
+--- /dev/null
++++ b/compiler/s390x/s390xreg.dat
+@@ -0,0 +1,41 @@
++;
++;  s390x (z/Architecture) registers
++;
++;  layout
++;  <name>,<type>,<subtype>,<value>,<stdname>,<stab idx>,<dwarf idx>
++;
++NO,$00,$00,$00,INVALID,-1,-1
++; General purpose registers
++R0,$01,$00,$00,r0,0,0
++R1,$01,$00,$01,r1,1,1
++R2,$01,$00,$02,r2,2,2
++R3,$01,$00,$03,r3,3,3
++R4,$01,$00,$04,r4,4,4
++R5,$01,$00,$05,r5,5,5
++R6,$01,$00,$06,r6,6,6
++R7,$01,$00,$07,r7,7,7
++R8,$01,$00,$08,r8,8,8
++R9,$01,$00,$09,r9,9,9
++R10,$01,$00,$0a,r10,10,10
++R11,$01,$00,$0b,r11,11,11
++R12,$01,$00,$0c,r12,12,12
++R13,$01,$00,$0d,r13,13,13
++R14,$01,$00,$0e,r14,14,14
++R15,$01,$00,$0f,r15,15,15
++; Floating point registers (DWARF numbering of the s390x ELF ABI)
++F0,$02,$00,$00,f0,16,16
++F1,$02,$00,$01,f1,20,20
++F2,$02,$00,$02,f2,17,17
++F3,$02,$00,$03,f3,21,21
++F4,$02,$00,$04,f4,18,18
++F5,$02,$00,$05,f5,22,22
++F6,$02,$00,$06,f6,19,19
++F7,$02,$00,$07,f7,23,23
++F8,$02,$00,$08,f8,24,24
++F9,$02,$00,$09,f9,28,28
++F10,$02,$00,$0a,f10,25,25
++F11,$02,$00,$0b,f11,29,29
++F12,$02,$00,$0c,f12,26,26
++F13,$02,$00,$0d,f13,30,30
++F14,$02,$00,$0e,f14,27,27
++F15,$02,$00,$0f,f15,31,31
+diff --git a/compiler/s390x/symcpu.pas b/compiler/s390x/symcpu.pas
+new file mode 100644
+index 00000000..9e0b3be2
+--- /dev/null
++++ b/compiler/s390x/symcpu.pas
+@@ -0,0 +1,220 @@
++{
++    Copyright (c) 2014 by Florian Klaempfl
++
++    Symbol table overrides for s390x
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit symcpu;
++
++{$i fpcdefs.inc}
++
++interface
++
++uses
++  symtype,symdef,symsym;
++
++type
++  { defs }
++  tcpufiledef = class(tfiledef)
++  end;
++  tcpufiledefclass = class of tcpufiledef;
++
++  tcpuvariantdef = class(tvariantdef)
++  end;
++  tcpuvariantdefclass = class of tcpuvariantdef;
++
++  tcpuformaldef = class(tformaldef)
++  end;
++  tcpuformaldefclass = class of tcpuformaldef;
++
++  tcpuforwarddef = class(tforwarddef)
++  end;
++  tcpuforwarddefclass = class of tcpuforwarddef;
++
++  tcpuundefineddef = class(tundefineddef)
++  end;
++  tcpuundefineddefclass = class of tcpuundefineddef;
++
++  tcpuerrordef = class(terrordef)
++  end;
++  tcpuerrordefclass = class of tcpuerrordef;
++
++  tcpupointerdef = class(tpointerdef)
++  end;
++  tcpupointerdefclass = class of tcpupointerdef;
++
++  tcpurecorddef = class(trecorddef)
++  end;
++  tcpurecorddefclass = class of tcpurecorddef;
++
++  tcpuimplementedinterface = class(timplementedinterface)
++  end;
++  tcpuimplementedinterfaceclass = class of tcpuimplementedinterface;
++
++  tcpuobjectdef = class(tobjectdef)
++  end;
++  tcpuobjectdefclass = class of tcpuobjectdef;
++
++  tcpuclassrefdef = class(tclassrefdef)
++  end;
++  tcpuclassrefdefclass = class of tcpuclassrefdef;
++
++  tcpuarraydef = class(tarraydef)
++  end;
++  tcpuarraydefclass = class of tcpuarraydef;
++
++  tcpuorddef = class(torddef)
++  end;
++  tcpuorddefclass = class of tcpuorddef;
++
++  tcpufloatdef = class(tfloatdef)
++  end;
++  tcpufloatdefclass = class of tcpufloatdef;
++
++  tcpuprocvardef = class(tprocvardef)
++  end;
++  tcpuprocvardefclass = class of tcpuprocvardef;
++
++  tcpuprocdef = class(tprocdef)
++  end;
++  tcpuprocdefclass = class of tcpuprocdef;
++
++  tcpustringdef = class(tstringdef)
++  end;
++  tcpustringdefclass = class of tcpustringdef;
++
++  tcpuenumdef = class(tenumdef)
++  end;
++  tcpuenumdefclass = class of tcpuenumdef;
++
++  tcpusetdef = class(tsetdef)
++  end;
++  tcpusetdefclass = class of tcpusetdef;
++
++  { syms }
++  tcpulabelsym = class(tlabelsym)
++  end;
++  tcpulabelsymclass = class of tcpulabelsym;
++
++  tcpuunitsym = class(tunitsym)
++  end;
++  tcpuunitsymclass = class of tcpuunitsym;
++
++  tcpuprogramparasym = class(tprogramparasym)
++  end;
++  tcpuprogramparasymclass = class(tprogramparasym);
++
++  tcpunamespacesym = class(tnamespacesym)
++  end;
++  tcpunamespacesymclass = class of tcpunamespacesym;
++
++  tcpuprocsym = class(tprocsym)
++  end;
++  tcpuprocsymclass = class of tcpuprocsym;
++
++  tcputypesym = class(ttypesym)
++  end;
++  tcpuypesymclass = class of tcputypesym;
++
++  tcpufieldvarsym = class(tfieldvarsym)
++  end;
++  tcpufieldvarsymclass = class of tcpufieldvarsym;
++
++  tcpulocalvarsym = class(tlocalvarsym)
++  end;
++  tcpulocalvarsymclass = class of tcpulocalvarsym;
++
++  tcpuparavarsym = class(tparavarsym)
++  end;
++  tcpuparavarsymclass = class of tcpuparavarsym;
++
++  tcpustaticvarsym = class(tstaticvarsym)
++  end;
++  tcpustaticvarsymclass = class of tcpustaticvarsym;
++
++  tcpuabsolutevarsym = class(tabsolutevarsym)
++  end;
++  tcpuabsolutevarsymclass = class of tcpuabsolutevarsym;
++
++  tcpupropertysym = class(tpropertysym)
++  end;
++  tcpupropertysymclass = class of tcpupropertysym;
++
++  tcpuconstsym = class(tconstsym)
++  end;
++  tcpuconstsymclass = class of tcpuconstsym;
++
++  tcpuenumsym = class(tenumsym)
++  end;
++  tcpuenumsymclass = class of tcpuenumsym;
++
++  tcpusyssym = class(tsyssym)
++  end;
++  tcpusyssymclass = class of tcpusyssym;
++
++
++var
++  pbestrealtype : ^tdef = @s64floattype;
++
++
++implementation
++
++  uses
++    symconst, defutil, defcmp;
++
++
++begin
++  { used tdef classes }
++  cfiledef:=tcpufiledef;
++  cvariantdef:=tcpuvariantdef;
++  cformaldef:=tcpuformaldef;
++  cforwarddef:=tcpuforwarddef;
++  cundefineddef:=tcpuundefineddef;
++  cerrordef:=tcpuerrordef;
++  cpointerdef:=tcpupointerdef;
++  crecorddef:=tcpurecorddef;
++  cimplementedinterface:=tcpuimplementedinterface;
++  cobjectdef:=tcpuobjectdef;
++  cclassrefdef:=tcpuclassrefdef;
++  carraydef:=tcpuarraydef;
++  corddef:=tcpuorddef;
++  cfloatdef:=tcpufloatdef;
++  cprocvardef:=tcpuprocvardef;
++  cprocdef:=tcpuprocdef;
++  cstringdef:=tcpustringdef;
++  cenumdef:=tcpuenumdef;
++  csetdef:=tcpusetdef;
++
++  { used tsym classes }
++  clabelsym:=tcpulabelsym;
++  cunitsym:=tcpuunitsym;
++  cprogramparasym:=tcpuprogramparasym;
++  cnamespacesym:=tcpunamespacesym;
++  cprocsym:=tcpuprocsym;
++  ctypesym:=tcputypesym;
++  cfieldvarsym:=tcpufieldvarsym;
++  clocalvarsym:=tcpulocalvarsym;
++  cparavarsym:=tcpuparavarsym;
++  cstaticvarsym:=tcpustaticvarsym;
++  cabsolutevarsym:=tcpuabsolutevarsym;
++  cpropertysym:=tcpupropertysym;
++  cconstsym:=tcpuconstsym;
++  cenumsym:=tcpuenumsym;
++  csyssym:=tcpusyssym;
++end.
++
+diff --git a/compiler/s390x/tripletcpu.pas b/compiler/s390x/tripletcpu.pas
+new file mode 100644
+index 00000000..0de523a1
+--- /dev/null
++++ b/compiler/s390x/tripletcpu.pas
+@@ -0,0 +1,40 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Construct the cpu part of the triplet
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit tripletcpu;
++
++{$i fpcdefs.inc}
++
++interface
++
++uses
++  globtype;
++
++function tripletcpustr(tripletstyle: ttripletstyle): ansistring;
++
++implementation
++
++function tripletcpustr(tripletstyle: ttripletstyle): ansistring;
++  begin
++    result:='s390x';
++  end;
++
++end.
+diff --git a/compiler/systems.inc b/compiler/systems.inc
+index 1e156fee..55959092 100644
+--- a/compiler/systems.inc
++++ b/compiler/systems.inc
+@@ -59,7 +59,8 @@
+              cpu_z80,                      { 22 }
+              cpu_mips64,                   { 23 }
+              cpu_mips64el,                 { 24 }
+-             cpu_loongarch64               { 25 }
++             cpu_loongarch64,              { 25 }
++             cpu_s390x                     { 26 }
+        );
+ 
+        tasmmode= (asmmode_none
+@@ -218,7 +219,8 @@
+              system_mipsel_ps1,         { 123 }
+              system_wasm32_wasip1threads,{ 124 }
+              system_wasm32_wasip2,      { 125 }
+-             system_powerpc64_freebsd   { 126 }
++             system_powerpc64_freebsd,  { 126 }
++             system_s390x_zos           { 127 }
+        );
+ 
+      type
+@@ -345,7 +347,8 @@
+              ld_sinclairql,
+              ld_wasi,
+              ld_human68k,
+-             ld_ps1
++             ld_ps1,
++             ld_zos
+        );
+ 
+        tar = (ar_none
+diff --git a/compiler/systems.pas b/compiler/systems.pas
+index f864b751..e26e00ce 100644
+--- a/compiler/systems.pas
++++ b/compiler/systems.pas
+@@ -492,7 +492,7 @@     tabiinfo = record
+             ('','i386','m68k','alpha','powerpc','sparc','vm','ia64','x86_64',
+              'mips','arm', 'powerpc64', 'avr', 'mipsel','jvm', 'i8086',
+              'aarch64', 'wasm32', 'sparc64', 'riscv32', 'riscv64', 'xtensa',
+-             'z80', 'mips64', 'mips64el', 'loongarch64');
++             'z80', 'mips64', 'mips64el', 'loongarch64', 's390x');
+ 
+        abiinfo : array[tabi] of tabiinfo = (
+          (name: 'DEFAULT'; supported: true),
+@@ -1236,6 +1236,10 @@ procedure InitSystems;
+ {$ifdef loongarch64}
+   default_target(system_loongarch64_linux);
+ {$endif loongarch64}
++
++{$ifdef s390x}
++  default_target(system_s390x_zos);
++{$endif s390x}
+ end;
+ 
+ 
+diff --git a/compiler/systems/i_zos.pas b/compiler/systems/i_zos.pas
+new file mode 100644
+index 00000000..de91d812
+--- /dev/null
++++ b/compiler/systems/i_zos.pas
+@@ -0,0 +1,116 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    This unit implements support information structures for z/OS
++    (z/OS UNIX System Services, 64 bit, XPLINK, Language Environment)
++
++    The code is generated by the LLVM code generator; programs run in
++    ASCII mode (like IBM Open XL C/C++) and use the ASCII variants of the
++    z/OS C runtime library functions.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++{ This unit implements support information structures for z/OS. }
++unit i_zos;
++
++{$i fpcdefs.inc}
++
++  interface
++
++    uses
++       systems;
++
++    const
++       system_s390x_zos_info : tsysteminfo =
++          (
++            system       : system_s390x_zos;
++            name         : 'z/OS for s390x (64 bit, XPLINK, ASCII)';
++            shortname    : 'zos';
++            flags        : [tf_files_case_sensitive,
++                            tf_smartlink_sections,
++                            tf_safecall_exceptions,
++                            tf_use_psabieh];
++            cpu          : cpu_s390x;
++            unit_env     : 'ZOSUNITS';
++            extradefines : 'UNIX;HASUNIX';
++            exeext       : '';
++            defext       : '.def';
++            scriptext    : '.sh';
++            smartext     : '.sl';
++            unitext      : '.ppu';
++            unitlibext   : '.ppl';
++            asmext       : '.s';
++            objext       : '.o';
++            resext       : '.res';
++            resobjext    : '.or';
++            sharedlibext : '.so';
++            staticlibext : '.a';
++            staticlibprefix : 'libp';
++            sharedlibprefix : 'lib';
++            sharedClibext : '.so';
++            staticClibext : '.a';
++            staticClibprefix : 'lib';
++            sharedClibprefix : 'lib';
++            importlibprefix : 'libimp';
++            importlibext : '.x';
++            Cprefix      : '';
++            newline      : #10;
++            dirsep       : '/';
++            assem        : as_clang_llvm;
++            assemextern  : as_clang_llvm;
++            link         : ld_none;
++            linkextern   : ld_zos;
++            ar           : ar_gnu_ar;
++            res          : res_none;
++            dbg          : dbg_none;
++            script       : script_unix;
++            endian       : endian_big;
++            alignment    :
++              (
++                procalign       : 8;
++                loopalign       : 4;
++                jumpalign       : 0;
++                jumpalignskipmax    : 0;
++                coalescealign   : 0;
++                coalescealignskipmax: 0;
++                constalignmin   : 0;
++                constalignmax   : 8;
++                varalignmin     : 0;
++                varalignmax     : 8;
++                localalignmin   : 4;
++                localalignmax   : 8;
++                recordalignmin  : 0;
++                recordalignmax  : 8;
++                maxCrecordalign : 8
++              );
++            first_parm_offset : 0;
++            stacksize    : 1024*1024;
++            stackalign   : 8;
++            abi : abi_default;
++            { same as clang --target=s390x-ibm-zos }
++            llvmdatalayout : 'E-S64-m:l-p1:32:32-i1:8:16-i8:8:16-i64:64-f128:64-v128:64-a:8:16-n32:64';
++          );
++
++  implementation
++
++initialization
++{$ifdef CPUS390X}
++  {$ifdef zos}
++    set_source_info(system_s390x_zos_info);
++  {$endif zos}
++{$endif CPUS390X}
++end.
+diff --git a/compiler/systems/t_zos.pas b/compiler/systems/t_zos.pas
+new file mode 100644
+index 00000000..6481bddc
+--- /dev/null
++++ b/compiler/systems/t_zos.pas
+@@ -0,0 +1,183 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    This unit implements support import, export, link routines
++    for the z/OS target
++
++    Programs are bound on z/OS itself (z/OS UNIX ld, i.e. the binder). The
++    linker below writes a link list (<program>.zlink) with the object
++    files and libraries and hands it to an external tool (zos-ld by
++    default, see -XP / -FD) that transfers the files and runs the binder.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit t_zos;
++
++{$i fpcdefs.inc}
++
++interface
++
++  uses
++    globtype,link,
++    import,export,expunix;
++
++  type
++    timportlibzos=class(timportlib)
++      procedure generatelib;override;
++    end;
++
++    texportlibzos=class(texportlibunix)
++    end;
++    TLinkerZOS=class(texternallinker)
++    private
++      function WriteLinkList(const fn: TCmdStr; isdll: boolean): boolean;
++      function CallLinker(isdll: boolean): boolean;
++    public
++      procedure SetDefaultInfo;override;
++      function  MakeExecutable:boolean;override;
++      function  MakeSharedLibrary:boolean;override;
++    end;
++
++implementation
++
++  uses
++    SysUtils,
++    cutils,cfileutl,cclasses,
++    verbose,systems,globals,
++    fmodule,ogbase,
++    i_zos;
++
++{*****************************************************************************
++                               timportlibzos
++*****************************************************************************}
++
++    procedure timportlibzos.generatelib;
++      var
++        i: longint;
++        ImportLibrary: TImportLibrary;
++      begin
++        for i:=0 to current_module.ImportLibraryList.Count-1 do
++          begin
++            ImportLibrary:=TImportLibrary(current_module.ImportLibraryList[i]);
++            current_module.linkothersharedlibs.add(ImportLibrary.Name,link_always);
++          end;
++      end;
++
++
++{*****************************************************************************
++                                  TLinkerZOS
++*****************************************************************************}
++
++    procedure TLinkerZOS.SetDefaultInfo;
++      begin
++        with Info do
++          begin
++            { zos-ld <kind> <output> <link list> }
++            ExeCmd[1]:='zos-ld exe $EXE $RES';
++            DllCmd[1]:='zos-ld dll $EXE $RES';
++            ResName:='link.zlink';
++          end;
++      end;
++
++
++    function TLinkerZOS.WriteLinkList(const fn: TCmdStr; isdll: boolean): boolean;
++      var
++        t: text;
++        s: TCmdStr;
++      begin
++        assign(t,fn);
++        {$push}{$i-}
++        rewrite(t);
++        {$pop}
++        if ioresult<>0 then
++          begin
++            result:=false;
++            exit;
++          end;
++        { object files, in link order }
++        while not ObjectFiles.Empty do
++          begin
++            s:=ObjectFiles.GetFirst;
++            if s<>'' then
++              writeln(t,'obj ',s);
++          end;
++        { Pascal static libraries }
++        while not StaticLibFiles.Empty do
++          begin
++            s:=StaticLibFiles.GetFirst;
++            if s<>'' then
++              writeln(t,'lib ',s);
++          end;
++        { C libraries (linklib directive); the C runtime itself comes from LE }
++        while not SharedLibFiles.Empty do
++          begin
++            s:=SharedLibFiles.GetFirst;
++            if (s<>'') and (s<>'c') then
++              writeln(t,'clib ',s);
++          end;
++        if isdll then
++          writeln(t,'dll');
++        close(t);
++        result:=true;
++      end;
++
++
++    function TLinkerZOS.CallLinker(isdll: boolean): boolean;
++      var
++        binstr, cmdstr, resname: TCmdStr;
++      begin
++        resname:=outputexedir+ChangeFileExt(ExtractFileName(current_module.exefilename),'.zlink');
++        result:=WriteLinkList(resname,isdll);
++        if not result then
++          exit;
++        if isdll then
++          SplitBinCmd(Info.DllCmd[1],binstr,cmdstr)
++        else
++          SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
++        Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
++        Replace(cmdstr,'$RES',maybequoted(resname));
++        binstr:=FindUtil(utilsprefix+binstr);
++        result:=DoExec(binstr,cmdstr,true,false);
++      end;
++
++
++    function TLinkerZOS.MakeExecutable:boolean;
++      begin
++        if not(cs_link_nolink in current_settings.globalswitches) then
++          Message1(exec_i_linking,current_module.exefilename);
++        result:=CallLinker(false);
++      end;
++
++
++    function TLinkerZOS.MakeSharedLibrary:boolean;
++      begin
++        if not(cs_link_nolink in current_settings.globalswitches) then
++          Message1(exec_i_linking,current_module.sharedlibfilename);
++        result:=CallLinker(true);
++      end;
++
++
++{*****************************************************************************
++                                     Initialize
++*****************************************************************************}
++
++initialization
++  RegisterLinker(ld_zos,TLinkerZOS);
++  RegisterImport(system_s390x_zos,timportlibzos);
++  RegisterExport(system_s390x_zos,texportlibzos);
++  RegisterTarget(system_s390x_zos_info);
++end.
+diff --git a/compiler/triplet.pas b/compiler/triplet.pas
+index 67fe3e2c..b604007b 100644
+--- a/compiler/triplet.pas
++++ b/compiler/triplet.pas
+@@ -71,6 +71,8 @@ implementation
+         result:=result+'-sun-solaris2'
+       else if target_info.system in systems_aix then
+         result:=result+'-ibm-aix53'
++      else if target_info.system=system_s390x_zos then
++        result:=result+'-ibm-zos'
+       else if target_info.system in [system_i386_haiku] then
+         result:=result+'-unknown-haiku'
+       else if target_info.system in systems_embedded then
+diff --git a/compiler/utils/mks390xreg.pp b/compiler/utils/mks390xreg.pp
+new file mode 100644
+index 00000000..992289ff
+--- /dev/null
++++ b/compiler/utils/mks390xreg.pp
+@@ -0,0 +1,290 @@
++{
++    Copyright (c) 1998-2002 by Peter Vreman and Florian Klaempfl
++
++    Convert s390xreg.dat to several .inc files for usage with
++    the Free pascal compiler
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++{$mode objfpc}
++
++program mks390xreg;
++
++const Version = '1.00';
++      max_regcount = 200;
++
++var s : string;
++    i : longint;
++    line : longint;
++    regcount:byte;
++    regcount_bsstart:byte;
++  	riscv64 : boolean;
++    fileprefix : string;
++    names,
++    regtypes,
++    subtypes,
++    supregs,
++    numbers,
++    stdnames,
++    stabs,dwarf : array[0..max_regcount-1] of string[63];
++    regnumber_index,
++    std_regname_index : array[0..max_regcount-1] of byte;
++
++function tostr(l : longint) : string;
++
++begin
++  str(l,tostr);
++end;
++
++function readstr : string;
++
++  begin
++     result:='';
++     while (s[i]<>',') and (i<=length(s)) do
++       begin
++          result:=result+s[i];
++          inc(i);
++       end;
++  end;
++
++
++procedure readcomma;
++  begin
++     if s[i]<>',' then
++       begin
++         writeln('Missing "," at line ',line);
++         writeln('Line: "',s,'"');
++         halt(1);
++       end;
++     inc(i);
++  end;
++
++
++procedure skipspace;
++
++  begin
++     while (s[i] in [' ',#9]) do
++       inc(i);
++  end;
++
++procedure openinc(out f:text;const fn:string);
++begin
++  writeln('creating ',fn);
++  assign(f,fn);
++  rewrite(f);
++  writeln(f,'{ don''t edit, this file is generated from s390xreg.dat }');
++end;
++
++
++procedure closeinc(var f:text);
++begin
++  writeln(f);
++  close(f);
++end;
++
++procedure build_regnum_index;
++
++var h,i,j,p,t:byte;
++
++begin
++  {Build the registernumber2regindex index.
++   Step 1: Fill.}
++  for i:=0 to regcount-1 do
++    regnumber_index[i]:=i;
++  {Step 2: Sort. We use a Shell-Metzner sort.}
++  p:=regcount_bsstart;
++  repeat
++    for h:=0 to regcount-p-1 do
++      begin
++        i:=h;
++        repeat
++          j:=i+p;
++          if numbers[regnumber_index[j]]>=numbers[regnumber_index[i]] then
++            break;
++          t:=regnumber_index[i];
++          regnumber_index[i]:=regnumber_index[j];
++          regnumber_index[j]:=t;
++          if i<p then
++            break;
++          dec(i,p);
++        until false;
++      end;
++    p:=p shr 1;
++  until p=0;
++end;
++
++procedure build_std_regname_index;
++
++var h,i,j,p,t:byte;
++
++begin
++  {Build the registernumber2regindex index.
++   Step 1: Fill.}
++  for i:=0 to regcount-1 do
++    std_regname_index[i]:=i;
++  {Step 2: Sort. We use a Shell-Metzner sort.}
++  p:=regcount_bsstart;
++  repeat
++    for h:=0 to regcount-p-1 do
++      begin
++        i:=h;
++        repeat
++          j:=i+p;
++          if stdnames[std_regname_index[j]]>=stdnames[std_regname_index[i]] then
++            break;
++          t:=std_regname_index[i];
++          std_regname_index[i]:=std_regname_index[j];
++          std_regname_index[j]:=t;
++          if i<p then
++            break;
++          dec(i,p);
++        until false;
++      end;
++    p:=p shr 1;
++  until p=0;
++end;
++
++
++procedure read_s390xreg_file;
++
++var infile:text;
++
++begin
++   { open dat file }
++   assign(infile,'s390xreg.dat');
++   reset(infile);
++   while not(eof(infile)) do
++     begin
++        { handle comment }
++        readln(infile,s);
++        inc(line);
++        while (s[1]=' ') do
++         delete(s,1,1);
++        if (s='') or (s[1]=';') then
++          continue;
++
++        i:=1;
++        names[regcount]:=readstr;
++        readcomma;
++        regtypes[regcount]:=readstr;
++        readcomma;
++        subtypes[regcount]:=readstr;
++        readcomma;
++        supregs[regcount]:=readstr;
++        readcomma;
++        stdnames[regcount]:=readstr;
++        readcomma;
++        stabs[regcount]:=readstr;
++        readcomma;
++        dwarf[regcount]:=readstr;
++        { Create register number }
++        if supregs[regcount][1]<>'$' then
++          begin
++            writeln('Missing $ before number, at line ',line);
++            writeln('Line: "',s,'"');
++            halt(1);
++          end;
++        numbers[regcount]:=regtypes[regcount]+copy(subtypes[regcount],2,255)+'00'+copy(supregs[regcount],2,255);
++        if i<length(s) then
++          begin
++            writeln('Extra chars at end of line, at line ',line);
++            writeln('Line: "',s,'"');
++            halt(1);
++          end;
++        inc(regcount);
++        if regcount>max_regcount then
++          begin
++            writeln('Error: Too much registers, please increase maxregcount in source');
++            halt(2);
++          end;
++     end;
++   close(infile);
++end;
++
++procedure write_inc_files;
++
++var
++    norfile,stdfile,supfile,
++    numfile,stabfile,dwarffile,confile,
++    rnifile,srifile:text;
++    first:boolean;
++
++begin
++  { create inc files }
++  openinc(confile,'rs390x'+'con.inc');
++  openinc(supfile,'rs390x'+'sup.inc');
++  openinc(numfile,'rs390x'+'num.inc');
++  openinc(stdfile,'rs390x'+'std.inc');
++  openinc(stabfile,'rs390x'+'sta.inc');
++  openinc(dwarffile,'rs390x'+'dwa.inc');
++  openinc(norfile,'rs390x'+'nor.inc');
++  openinc(rnifile,'rs390x'+'rni.inc');
++  openinc(srifile,'rs390x'+'sri.inc');
++  first:=true;
++  for i:=0 to regcount-1 do
++    begin
++      if not first then
++        begin
++          writeln(numfile,',');
++          writeln(stdfile,',');
++          writeln(stabfile,',');
++          writeln(dwarffile,',');
++          writeln(rnifile,',');
++          writeln(srifile,',');
++        end
++      else
++        first:=false;
++      writeln(supfile,'RS_',names[i],' = ',supregs[i],';');
++      writeln(confile,'NR_'+names[i],' = ','tregister(',numbers[i],')',';');
++      write(numfile,'tregister(',numbers[i],')');
++      write(stdfile,'''',stdnames[i],'''');
++      write(stabfile,stabs[i]);
++      write(dwarffile,dwarf[i]);
++      write(rnifile,regnumber_index[i]);
++      write(srifile,std_regname_index[i]);
++    end;
++  write(norfile,regcount);
++  close(confile);
++  close(supfile);
++  closeinc(numfile);
++  closeinc(stdfile);
++  closeinc(stabfile);
++  closeinc(dwarffile);
++  closeinc(norfile);
++  closeinc(rnifile);
++  closeinc(srifile);
++  writeln('Done!');
++  writeln(regcount,' registers processed');
++end;
++
++
++begin
++   writeln('Register Table Converter Version ',Version);
++   line:=0;
++   regcount:=0;
++   riscv64:=paramstr(1)='riscv64';
++   fileprefix:='';
++   if riscv64 then
++     begin
++       fileprefix:='64';
++       writeln('Processing for CPU s390x');
++     end
++   else
++     begin
++       fileprefix:='32';
++       writeln('Processing for CPU s390x');
++     end;
++   read_s390xreg_file;
++   regcount_bsstart:=1;
++   while 2*regcount_bsstart<regcount do
++     regcount_bsstart:=regcount_bsstart*2;
++   build_regnum_index;
++   build_std_regname_index;
++   write_inc_files;
++end.
+diff --git a/compiler/version.pas b/compiler/version.pas
+index 1b3ca1c5..58318159 100644
+--- a/compiler/version.pas
++++ b/compiler/version.pas
+@@ -89,6 +89,9 @@ interface
+ {$ifdef cpuloongarch64}
+         source_cpu_string = 'loongarch64';
+ {$endif cpuloongarch64}
++{$ifdef cpus390x}
++        source_cpu_string = 's390x';
++{$endif cpus390x}
+ 
+ function version_string:string;
+ function full_version_string:string;
+-- 
+2.43.0
+

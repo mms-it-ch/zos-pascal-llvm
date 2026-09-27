@@ -1,0 +1,3348 @@
+From d79fc988201cda9d016a3656b0d2b8e53de2c75b Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 13:35:24 +0200
+Subject: [PATCH 04/10] rtl: add the z/OS port (s390x, LLVM code generator
+ only)
+
+rtl/zos: libc based like AIX; all operating system services come from the
+C runtime of the Language Environment (ASCII mode, POSIX(ON)).
+- types, structure layouts and constants were determined on z/OS with a
+  C probe (zos-pascal-llvm: pf1/probe/zosprobe.c); they differ a lot from
+  other Unix systems (e.g. O_RDONLY=2, F_OK=8, S_IFMT=$FF000000, struct
+  stat with eye catcher, tv_usec after 4 padding bytes)
+- errno.inc is generated from errno.h (scripts/gen-errno.py), errno is
+  accessed through __errno()
+- the heap uses malloc/free (mmap cannot map anonymous memory on z/OS)
+- sigset_t is manipulated through the C library
+- the Itanium unwind interface and the atomic operations come from a small
+  C runtime of the port (zos-pascal-llvm: runtime/*.c, linked with $L)
+
+rtl/s390x: no assembler routines; get_caller_addr etc. produce a fake
+backtrace like on wasm32, setjmp/longjmp are not used (LLVM exceptions).
+
+rtl/inc/psabieh.inc: FPC_DummyPotentialRaise in Pascal for s390x.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/inc/psabieh.inc     |   7 +
+ rtl/inc/system.inc      |   8 +
+ rtl/inc/systemh.inc     |   9 +
+ rtl/s390x/cpuh.inc      |  16 ++
+ rtl/s390x/int64p.inc    |  14 +
+ rtl/s390x/makefile.cpu  |   6 +
+ rtl/s390x/math.inc      |  14 +
+ rtl/s390x/mathu.inc     |  14 +
+ rtl/s390x/s390x.inc     | 113 ++++++++
+ rtl/s390x/set.inc       |  14 +
+ rtl/s390x/setjump.inc   |  30 ++
+ rtl/s390x/setjumph.inc  |  24 ++
+ rtl/s390x/strings.inc   |  14 +
+ rtl/s390x/stringss.inc  |  14 +
+ rtl/unix/sysunixh.inc   |   2 +-
+ rtl/zos/Makefile.fpc    | 106 +++++++
+ rtl/zos/dlzos.inc       | 101 +++++++
+ rtl/zos/errno.inc       | 162 +++++++++++
+ rtl/zos/errnostr.inc    |  22 ++
+ rtl/zos/osdefs.inc      |  16 ++
+ rtl/zos/osmacro.inc     |  94 ++++++
+ rtl/zos/ostypes.inc     | 230 +++++++++++++++
+ rtl/zos/pthread.inc     | 129 +++++++++
+ rtl/zos/ptypes.inc      | 166 +++++++++++
+ rtl/zos/rtldefs.inc     |  24 ++
+ rtl/zos/sighnd.inc      |  39 +++
+ rtl/zos/sighndh.inc     |  19 ++
+ rtl/zos/signal.inc      | 108 +++++++
+ rtl/zos/suuid.inc       |  54 ++++
+ rtl/zos/sysheap.inc     |  39 +++
+ rtl/zos/sysos.inc       | 111 ++++++++
+ rtl/zos/sysosh.inc      |  26 ++
+ rtl/zos/system.pp       | 263 +++++++++++++++++
+ rtl/zos/termio.pp       |  47 +++
+ rtl/zos/termios.inc     | 615 ++++++++++++++++++++++++++++++++++++++++
+ rtl/zos/termiosproc.inc | 100 +++++++
+ rtl/zos/unxconst.inc    |  85 ++++++
+ rtl/zos/unxfunc.inc     | 142 ++++++++++
+ 38 files changed, 2996 insertions(+), 1 deletion(-)
+ create mode 100644 rtl/s390x/cpuh.inc
+ create mode 100644 rtl/s390x/int64p.inc
+ create mode 100644 rtl/s390x/makefile.cpu
+ create mode 100644 rtl/s390x/math.inc
+ create mode 100644 rtl/s390x/mathu.inc
+ create mode 100644 rtl/s390x/s390x.inc
+ create mode 100644 rtl/s390x/set.inc
+ create mode 100644 rtl/s390x/setjump.inc
+ create mode 100644 rtl/s390x/setjumph.inc
+ create mode 100644 rtl/s390x/strings.inc
+ create mode 100644 rtl/s390x/stringss.inc
+ create mode 100644 rtl/zos/Makefile.fpc
+ create mode 100644 rtl/zos/dlzos.inc
+ create mode 100644 rtl/zos/errno.inc
+ create mode 100644 rtl/zos/errnostr.inc
+ create mode 100644 rtl/zos/osdefs.inc
+ create mode 100644 rtl/zos/osmacro.inc
+ create mode 100644 rtl/zos/ostypes.inc
+ create mode 100644 rtl/zos/pthread.inc
+ create mode 100644 rtl/zos/ptypes.inc
+ create mode 100644 rtl/zos/rtldefs.inc
+ create mode 100644 rtl/zos/sighnd.inc
+ create mode 100644 rtl/zos/sighndh.inc
+ create mode 100644 rtl/zos/signal.inc
+ create mode 100644 rtl/zos/suuid.inc
+ create mode 100644 rtl/zos/sysheap.inc
+ create mode 100644 rtl/zos/sysos.inc
+ create mode 100644 rtl/zos/sysosh.inc
+ create mode 100644 rtl/zos/system.pp
+ create mode 100644 rtl/zos/termio.pp
+ create mode 100644 rtl/zos/termios.inc
+ create mode 100644 rtl/zos/termiosproc.inc
+ create mode 100644 rtl/zos/unxconst.inc
+ create mode 100644 rtl/zos/unxfunc.inc
+
+diff --git a/rtl/inc/psabieh.inc b/rtl/inc/psabieh.inc
+index c96c9a40..23c20619 100644
+--- a/rtl/inc/psabieh.inc
++++ b/rtl/inc/psabieh.inc
+@@ -1245,6 +1245,13 @@ procedure fpc_raise_nested;compilerproc;
+     DoUnHandledException;
+   end;
+ 
++{$ifdef cpus390x}
++{ s390x only supports the LLVM code generator and has no assembler routines }
++procedure FPC_DummyPotentialRaise; noinline;
++  begin
++  end;
++{$else cpus390x}
+ procedure FPC_DummyPotentialRaise; nostackframe; assembler;
+   asm
+   end;
++{$endif cpus390x}
+diff --git a/rtl/inc/system.inc b/rtl/inc/system.inc
+index 56d8f2f6..a09e6bad 100644
+--- a/rtl/inc/system.inc
++++ b/rtl/inc/system.inc
+@@ -318,6 +318,14 @@ function do_isdevice(handle:thandle):boolean;forward;
+   {$define SYSPROCDEFINED}
+ {$endif cpuaarch64}
+ 
++{$ifdef cpus390x}
++  {$ifdef SYSPROCDEFINED}
++    {$Error Can't determine processor type !}
++  {$endif}
++  {$i s390x.inc}  { Case dependent, don't change }
++  {$define SYSPROCDEFINED}
++{$endif cpus390x}
++
+ {$ifdef cpuriscv32}
+   {$ifdef SYSPROCDEFINED}
+     {$Error Can't determine processor type !}
+diff --git a/rtl/inc/systemh.inc b/rtl/inc/systemh.inc
+index ca9a8ee0..7c9b050e 100644
+--- a/rtl/inc/systemh.inc
++++ b/rtl/inc/systemh.inc
+@@ -356,6 +356,15 @@
+   {$endif}
+ {$endif CPURISCV32}
+ 
++{$ifdef CPUS390X}
++  {$define DEFAULT_DOUBLE}
++
++  {$define SUPPORT_SINGLE}
++  {$define SUPPORT_DOUBLE}
++
++  ValReal = Double;
++{$endif CPUS390X}
++
+ {$ifdef CPURISCV64}
+   {$define DEFAULT_DOUBLE}
+ 
+diff --git a/rtl/s390x/cpuh.inc b/rtl/s390x/cpuh.inc
+new file mode 100644
+index 00000000..cb8746ac
+--- /dev/null
++++ b/rtl/s390x/cpuh.inc
+@@ -0,0 +1,16 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++type
++  TNativeFPUControlWord = record
++  end;
+diff --git a/rtl/s390x/int64p.inc b/rtl/s390x/int64p.inc
+new file mode 100644
+index 00000000..1dae4c61
+--- /dev/null
++++ b/rtl/s390x/int64p.inc
+@@ -0,0 +1,14 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{ s390x: nur LLVM-Codegenerator, die generischen Pascal-Routinen werden benutzt }
+diff --git a/rtl/s390x/makefile.cpu b/rtl/s390x/makefile.cpu
+new file mode 100644
+index 00000000..dad5f9a4
+--- /dev/null
++++ b/rtl/s390x/makefile.cpu
+@@ -0,0 +1,6 @@
++#
++# Here we set processor dependent include file names.
++#
++
++CPUNAMES=s390x int64p math set setjump setjumph strings stringss
++CPUINCNAMES=$(addsuffix .inc,$(CPUNAMES))
+diff --git a/rtl/s390x/math.inc b/rtl/s390x/math.inc
+new file mode 100644
+index 00000000..1dae4c61
+--- /dev/null
++++ b/rtl/s390x/math.inc
+@@ -0,0 +1,14 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{ s390x: nur LLVM-Codegenerator, die generischen Pascal-Routinen werden benutzt }
+diff --git a/rtl/s390x/mathu.inc b/rtl/s390x/mathu.inc
+new file mode 100644
+index 00000000..1dae4c61
+--- /dev/null
++++ b/rtl/s390x/mathu.inc
+@@ -0,0 +1,14 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{ s390x: nur LLVM-Codegenerator, die generischen Pascal-Routinen werden benutzt }
+diff --git a/rtl/s390x/s390x.inc b/rtl/s390x/s390x.inc
+new file mode 100644
+index 00000000..8e523f58
+--- /dev/null
++++ b/rtl/s390x/s390x.inc
+@@ -0,0 +1,113 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    Processor dependent implementation for the system unit for
++    s390x (z/Architecture)
++
++    The s390x port only supports the LLVM code generator, so there are no
++    assembler routines: everything that is not implemented here comes from
++    the generic Pascal implementations.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{****************************************************************************
++                                  FPU
++****************************************************************************}
++
++{$define FPC_SYSTEM_HAS_SYSINITFPU}
++procedure SysInitFPU;
++  begin
++    softfloat_rounding_mode:=rmNearest;
++    softfloat_exception_mask:=[float_flag_underflow,float_flag_inexact,float_flag_denormal];
++    softfloat_exception_flags:=[];
++  end;
++
++
++{$define FPC_SYSTEM_HAS_SYSRESETFPU}
++procedure SysResetFPU;{$ifdef SYSTEMINLINE}inline;{$endif}
++  begin
++    softfloat_exception_flags:=[];
++  end;
++
++
++function GetNativeFPUControlWord: TNativeFPUControlWord;{$ifdef SYSTEMINLINE}inline;{$endif}
++  begin
++  end;
++
++
++procedure SetNativeFPUControlWord(const cw: TNativeFPUControlWord);{$ifdef SYSTEMINLINE}inline;{$endif}
++  begin
++  end;
++
++
++{****************************************************************************
++                              Atomic operations
++****************************************************************************}
++
++{ implemented in C (zos-pascal-llvm: runtime/zosatomic.c), clang generates
++  compare and swap instructions for them }
++function c_atomic_cmp_xchg_32(var Target: longint; NewValue: longint; Comparand: longint): longint; cdecl; external name 'FPC_ATOMIC_CMP_XCHG_32';
++function c_atomic_cmp_xchg_64(var Target: int64; NewValue: int64; Comparand: int64): int64; cdecl; external name 'FPC_ATOMIC_CMP_XCHG_64';
++
++{$define FPC_SYSTEM_HAS_ATOMIC_CMP_XCHG_32}
++function fpc_atomic_cmp_xchg_32(var Target: longint; NewValue: longint; Comparand: longint): longint; compilerproc;
++  begin
++    result:=c_atomic_cmp_xchg_32(Target,NewValue,Comparand);
++  end;
++
++
++{$define FPC_SYSTEM_HAS_ATOMIC_CMP_XCHG_64}
++function fpc_atomic_cmp_xchg_64(var Target: int64; NewValue: int64; Comparand: int64): int64; compilerproc;
++  begin
++    result:=c_atomic_cmp_xchg_64(Target,NewValue,Comparand);
++  end;
++
++
++{****************************************************************************
++                       Caller/StackFrame Helpers
++****************************************************************************}
++
++{ Stack walking is not implemented yet (XPLINK frames have no frame pointer
++  chain that LLVM maintains). As on wasm32 a small fake backtrace is
++  produced, otherwise programs terminate with no output at all in case of a
++  runtime error. }
++
++{$define FPC_SYSTEM_HAS_GET_PC_ADDR}
++function Get_pc_addr : CodePointer;
++  begin
++    result:=CodePointer($eeeeeeef);
++  end;
++
++
++{$define FPC_SYSTEM_HAS_GET_CALLER_ADDR}
++function get_caller_addr(framebp:pointer;addr:codepointer=nil):pointer;
++  begin
++    if addr=CodePointer($eeeeeeef) then
++      result:=CodePointer($eeeeeeee)
++    else
++      result:=nil;
++  end;
++
++
++{$define FPC_SYSTEM_HAS_GET_CALLER_FRAME}
++function get_caller_frame(framebp:pointer;addr:codepointer=nil):pointer;
++  begin
++    result:=nil;
++  end;
++
++
++{$define FPC_SYSTEM_HAS_SPTR}
++function Sptr : pointer;
++  var
++    marker: byte;
++  begin
++    result:=@marker;
++  end;
+diff --git a/rtl/s390x/set.inc b/rtl/s390x/set.inc
+new file mode 100644
+index 00000000..1dae4c61
+--- /dev/null
++++ b/rtl/s390x/set.inc
+@@ -0,0 +1,14 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{ s390x: nur LLVM-Codegenerator, die generischen Pascal-Routinen werden benutzt }
+diff --git a/rtl/s390x/setjump.inc b/rtl/s390x/setjump.inc
+new file mode 100644
+index 00000000..ce738029
+--- /dev/null
++++ b/rtl/s390x/setjump.inc
+@@ -0,0 +1,30 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    SetJmp/Longjmp for s390x
++
++    Exceptions use the LLVM (landing pad) model on s390x, so these compiler
++    helpers are never called. A setjmp cannot be implemented in Pascal
++    without assembler (the helper would return before the longjmp).
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++function fpc_setjmp(var S : jmp_buf) : longint;[Public, alias : 'FPC_SETJMP'];compilerproc;
++  begin
++    result:=0;
++  end;
++
++
++procedure fpc_longjmp(var S : jmp_buf;value : longint);[Public, alias : 'FPC_LONGJMP'];compilerproc;
++  begin
++    { not supported on s390x }
++    halt(217);
++  end;
+diff --git a/rtl/s390x/setjumph.inc b/rtl/s390x/setjumph.inc
+new file mode 100644
+index 00000000..74753a82
+--- /dev/null
++++ b/rtl/s390x/setjumph.inc
+@@ -0,0 +1,24 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    SetJmp/Longjmp declarations for s390x
++
++    Exceptions use the LLVM (landing pad) model on s390x, so FPC's own
++    setjmp/longjmp is not used. The type is required by the compiler and
++    has the size of the C jmp_buf on z/OS.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++type
++  jmp_buf = record
++    data: array[0..127] of qword;
++  end;
++  pjmp_buf = ^jmp_buf;
+diff --git a/rtl/s390x/strings.inc b/rtl/s390x/strings.inc
+new file mode 100644
+index 00000000..1dae4c61
+--- /dev/null
++++ b/rtl/s390x/strings.inc
+@@ -0,0 +1,14 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{ s390x: nur LLVM-Codegenerator, die generischen Pascal-Routinen werden benutzt }
+diff --git a/rtl/s390x/stringss.inc b/rtl/s390x/stringss.inc
+new file mode 100644
+index 00000000..1dae4c61
+--- /dev/null
++++ b/rtl/s390x/stringss.inc
+@@ -0,0 +1,14 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{ s390x: nur LLVM-Codegenerator, die generischen Pascal-Routinen werden benutzt }
+diff --git a/rtl/unix/sysunixh.inc b/rtl/unix/sysunixh.inc
+index bc14d0f1..31a437c7 100644
+--- a/rtl/unix/sysunixh.inc
++++ b/rtl/unix/sysunixh.inc
+@@ -56,7 +56,7 @@
+   sLineBreak = LineEnding;
+   DefaultTextLineBreakStyle : TTextLineBreakStyle = tlbsLF;
+ 
+-{$if not defined(solaris) and not defined(darwin) and not defined(aix)}
++{$if not defined(solaris) and not defined(darwin) and not defined(aix) and not defined(zos)}
+ {$ifdef FPC_HAS_INDIRECT_ENTRY_INFORMATION}
+ var argc:longint;
+     argv:PPAnsiChar;
+diff --git a/rtl/zos/Makefile.fpc b/rtl/zos/Makefile.fpc
+new file mode 100644
+index 00000000..443e35d6
+--- /dev/null
++++ b/rtl/zos/Makefile.fpc
+@@ -0,0 +1,106 @@
++#
++#   Makefile.fpc for Free Pascal AIX RTL
++#
++
++[package]
++main=rtl
++
++[target]
++loaders=
++units=$(SYSTEMUNIT) $(UUCHARUNIT) $(UNIXTYPEUNIT) $(CTYPESUNIT) $(STRINGSUNIT) $(OBJPASUNIT) $(ISO7185UNIT) $(EXTPASUNIT) $(MACPASUNIT) \
++      $(HEAPTRCUNIT) \
++      $(BASEUNIXUNIT) $(UNIXUTILUNIT) \
++      $(TERMIOUNIT) $(UNIXUNIT) $(INITCUNIT) $(CMEMUNIT) \
++      $(LNFOGDBUNIT) \
++      $(SYSUTILSUNIT) $(TYPINFOUNIT) $(MATHUNIT) $(SORTBASEUNIT) $(FGLUNIT) $(CLASSESUNIT) \
++      $(CHARSETUNIT) $(CPALLUNIT) $(CHARACTERUNIT) $(UNIXCPUNIT) $(GETOPTSUNIT) \
++      $(ERRORSUNIT) \
++      # ipc 
++      $(DLUNIT) $(DYNLIBSUNIT) \
++      $(TYPESUNIT) $(SYSCONSTUNIT) \
++      $(RTLCONSTSUNIT) $(CTHREADSUNIT) \
++      $(DOSUNIT) \
++      $(CWSTRINGUNIT) $(FPWIDESTRINGUNIT) $(FPINTRESUNIT) $(CPU_UNITS) \
++      $(SOFTFPUUNIT) $(SFPUX80UNIT) $(UFLOATX80UNIT) $(SFPU128UNIT) $(UFLOAT128UNIT)
++implicitunits=$(CP_UNITS) $(UNICODEDATAUNIT)
++
++rsts=$(MATHUNIT) $(TYPINFOUNIT) $(CLASSESUNIT) $(SYSCONSTUNIT) $(RTLCONSTSUNIT)  $(UNICODEDATAUNIT)
++
++[require]
++nortl=y
++
++[install]
++fpcpackage=y
++
++[default]
++target=aix
++
++[compiler]
++includedir=$(INC) $(PROCINC) $(UNIXINC) # $(OSPROCINC)
++sourcedir=$(INC) $(PROCINC) $(UNIXINC) $(COMMON)
++
++
++[lib]
++libname=libfprtl.so
++libversion=2.0.0
++libunits=$(SYSTEMUNIT) $(OBJPASUNIT) $(STRINGSUNIT) \
++      $(UNIXUNIT)  \
++      $(DOSUNIT) \
++      $(SYSUTILSUNIT) $(TYPINFOUNIT) $(MATHUNIT) \
++      $(CPU_UNITS) $(GETOPTSUNIT) $(HEAPTRCUNIT) \
++      $(ERRORSUNIT)
++
++[prerules]
++RTL=..
++INC=$(RTL)/inc
++COMMON=$(RTL)/common
++PROCINC=$(RTL)/$(CPU_TARGET)
++OSPROCINC=$(RTL)/aix/$(CPU_TARGET)
++UNIXINC=$(RTL)/unix
++UNITPREFIX=rtl
++CLASSESDIR=$(UNIXINC)
++CPU_UNITS=
++CWSTRING_DEPS_OS=$(UNIXINC)/cwstraix.inc
++DYNLIBS_DEPS_OS=$(DLUNIT)$(PPUEXT)
++DYNLIBSINCDIR=$(UNIXINC)
++DL_DEPS_OS=$(DLUNIT)aix.inc
++TERMIO_DEPS_OS=$(UNIXTYPEUNIT)$(PPUEXT) $(CTYPESUNIT)$(PPUEXT)
++DOSDIR=$(UNIXINC)
++SYSUTILSDIR=$(UNIXINC)
++SYSUTILS_DEPS_OS = $(UNIXUNIT)$(PPUEXT) $(ERRORSUNIT)$(PPUEXT)
++
++
++
++
++ifeq ($(ARCH),powerpc)
++CPU_UNITS=$(INTRINSICSUNIT)
++endif
++
++ifeq ($(ARCH),powerpc64)
++CPU_UNITS=$(INTRINSICSUNIT)
++endif
++
++
++# AIX requires libc, no syscalls
++override FPCOPT+=-dFPC_USE_LIBC
++
++# Paths
++OBJPASDIR=$(RTL)/objpas
++
++[rules]
++.NOTPARALLEL:
++# Get the system independent include file names.
++# This will set the following variables :
++# SYSINCNAMES
++include $(INC)/makefile.inc
++SYSINCDEPS=$(addprefix $(INC)/,$(SYSINCNAMES))
++
++# Get the processor dependent include file names.
++# This will set the following variables :
++# CPUINCNAMES
++include $(PROCINC)/makefile.cpu
++SYSCPUDEPS=$(addprefix $(PROCINC)/,$(CPUINCNAMES))
++
++# Put system unit dependencies together.
++SYSDEPS=$(SYSINCDEPS) $(SYSCPUDEPS)
++
+diff --git a/rtl/zos/dlzos.inc b/rtl/zos/dlzos.inc
+new file mode 100644
+index 00000000..784c8fa5
+--- /dev/null
++++ b/rtl/zos/dlzos.inc
+@@ -0,0 +1,101 @@
++
++
++{ aix 5.3 doesn't have dladdr -> own implementation (from
++  http://root.cern.ch/drupal/content/aix-and-dladdr }
++
++
++  const
++    L_GETINFO = 2;
++
++  type
++    pld_info = ^ld_info;
++    ld_info = record
++      ldinfo_next: cuint;
++{$ifndef cpu64}
++      ldinfo_flags: cuint;
++{$endif}
++      _file: record
++        case byte of
++          0: (_ldinfo_fd: cint);
++          1: (_ldinfo_fp: pointer);
++          2: (_core_offset: ptrint);
++      end;
++      ldinfo_textorg: pointer;
++      ldinfo_textsize: ptrint;
++      ldinfo_dataorg: pointer;
++      ldinfo_datasize: ptrint;
++      ldinfo_filename: PAnsiChar;
++    end;
++
++  function loadquery(__lflags: cint; __buffer: pointer; __length: cuint): longint; cdecl; varargs; external;
++
++
++  function aix53_dladdr(Lib: pointer; info: Pdl_info): Longint; cdecl;
++    var
++      buf: array[0..4095] of byte;
++      pbuf: pbyte;
++      ldi: pld_info;
++      text_begin, text_end: pointer;
++    begin
++      fillchar(info^,sizeof(info^),0);
++      aix53_dladdr:=loadquery(L_GETINFO,@buf,sizeof(buf));
++      if aix53_dladdr=-1 then
++        begin
++          aix53_dladdr:=0;
++          exit;
++        end;
++      pbuf:=@buf[0];
++      ldi:=pld_info(pbuf);
++      // First is main(), skip.
++      while ldi^.ldinfo_next<>0 do
++        begin
++          inc(pbuf,ldi^.ldinfo_next);
++          ldi:=pld_info(pbuf);
++          text_begin:=ldi^.ldinfo_textorg;
++          if text_begin<Lib then
++            begin
++              text_end:=text_begin+ldi^.ldinfo_textsize;
++              if text_end>Lib then
++                begin
++                  info^.dli_fname:=ldi^.ldinfo_filename;
++                  info^.dli_fbase:=ldi^.ldinfo_textorg;
++                  { no info about symbols -> leave nil/0 (valid for regular
++                    dladdr call as well) }
++                  aix53_dladdr:=1;
++                  exit;
++                end;
++           end;
++        end;
++      aix53_dladdr:=0;
++    end;
++
++
++  type
++    tdladdrfunc = function(lib: pointer; info: Pdl_info): longint; cdecl;
++
++  function dladdr(Lib: pointer; info: Pdl_info): Longint; cdecl;
++    const
++      dladdrf: tdladdrfunc = nil;
++    var
++      libdl: pointer;
++    begin
++      { dladdr is only available on AIX 6.0 and later.
++
++        AIX does not support undefined weak external symbols, so we cannot
++        simply define dladdr as weakexternal and be done with it -> look up
++        the address of dladdr using dlsym }
++      if not assigned(dladdrf) then
++        begin
++          libdl:=dlopen('libdl.a',RTLD_LAZY);
++          if assigned(libdl) then
++            dladdrf:=tdladdrfunc(dlsym(libdl,'dladdr'));
++          if not assigned(dladdrf) then
++            dladdrf:=@aix53_dladdr;
++          { can't be the last reference that causes it to be unloaded, since
++            most functions from this unit come from it }
++          if assigned(libdl) then
++            dlclose(libdl);
++        end;
++      dladdr:=dladdrf(Lib,info);
++    end;
++
+diff --git a/rtl/zos/errno.inc b/rtl/zos/errno.inc
+new file mode 100644
+index 00000000..d130ee89
+--- /dev/null
++++ b/rtl/zos/errno.inc
+@@ -0,0 +1,162 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    z/OS error numbers, generated from the z/OS C header errno.h
++    by scripts/gen-errno.py (zos-pascal-llvm)
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++const
++  ESysEDOM = 1;
++  ESysERANGE = 2;
++  ESysEACCES = 111;
++  ESysEAGAIN = 112;
++  ESysEBADF = 113;
++  ESysEBUSY = 114;
++  ESysECHILD = 115;
++  ESysEDEADLK = 116;
++  ESysEEXIST = 117;
++  ESysEFAULT = 118;
++  ESysEFBIG = 119;
++  ESysEINTR = 120;
++  ESysEINVAL = 121;
++  ESysEIO = 122;
++  ESysEISDIR = 123;
++  ESysEMFILE = 124;
++  ESysEMLINK = 125;
++  ESysENAMETOOLONG = 126;
++  ESysENFILE = 127;
++  ESysENODEV = 128;
++  ESysENOENT = 129;
++  ESysENOEXEC = 130;
++  ESysENOLCK = 131;
++  ESysENOMEM = 132;
++  ESysENOSPC = 133;
++  ESysENOSYS = 134;
++  ESysENOTDIR = 135;
++  ESysENOTEMPTY = 136;
++  ESysENOTTY = 137;
++  ESysENXIO = 138;
++  ESysEPERM = 139;
++  ESysEPIPE = 140;
++  ESysEROFS = 141;
++  ESysESPIPE = 142;
++  ESysESRCH = 143;
++  ESysEXDEV = 144;
++  ESysE2BIG = 145;
++  ESysELOOP = 146;
++  ESysEILSEQ = 147;
++  ESysENODATA = 148;
++  ESysEOVERFLOW = 149;
++  ESysEMVSNOTUP = 150;
++  ESysECMSSTORAGE = 151;
++  ESysEMVSDYNALC = 151;
++  ESysEMVSCVAF = 152;
++  ESysEMVSCATLG = 153;
++  ESysECMSINITIAL = 156;
++  ESysEMVSINITIAL = 156;
++  ESysECMSERR = 157;
++  ESysEMVSERR = 157;
++  ESysEMVSPARM = 158;
++  ESysECMSPFSFILE = 159;
++  ESysEMVSPFSFILE = 159;
++  ESysEMVSBADCHAR = 160;
++  ESysECMSPFSPERM = 162;
++  ESysEMVSPFSPERM = 162;
++  ESysEMVSSAFEXTRERR = 163;
++  ESysEMVSSAF2ERR = 164;
++  ESysEMVSTODNOTSET = 165;
++  ESysEMVSPATHOPTS = 166;
++  ESysEMVSNORTL = 167;
++  ESysEMVSEXPIRE = 168;
++  ESysEMVSPASSWORD = 169;
++  ESysEMVSWLMERROR = 170;
++  ESysEMVSCPLERROR = 171;
++  ESysEMVSARMERROR = 172;
++  ESysELENOFORK = 200;
++  ESysELEMSGERR = 201;
++  ESysEBUFLEN = 227;
++  ESysEEXTLINK = 228;
++  ESysENODD = 229;
++  ESysECMSESMERR = 230;
++  ESysECPERR = 231;
++  ESysELEMULTITHREAD = 232;
++  ESysELEFENCE = 244;
++  ESysENOTSUP = 247;
++  ESysELEMULTITHREADFORK = 257;
++  ESysECUNNOENV = 258;
++  ESysECUNNOCONV = 259;
++  ESysECUNNOTALIGNED = 260;
++  ESysECUNERR = 262;
++  ESysEIBMBADCALL = 1000;
++  ESysEIBMBADPARM = 1001;
++  ESysEIBMSOCKOUTOFRANGE = 1002;
++  ESysEIBMSOCKINUSE = 1003;
++  ESysEIBMIUCVERR = 1004;
++  ESysEIBMCONFLICT = 1008;
++  ESysEIBMCANCELLED = 1009;
++  ESysEIBMBADTCPNAME = 1011;
++  ESysENOTBLK = 1100;
++  ESysETXTBSY = 1101;
++  ESysEWOULDBLOCK = 1102;
++  ESysEINPROGRESS = 1103;
++  ESysEALREADY = 1104;
++  ESysENOTSOCK = 1105;
++  ESysEDESTADDRREQ = 1106;
++  ESysEMSGSIZE = 1107;
++  ESysEPROTOTYPE = 1108;
++  ESysENOPROTOOPT = 1109;
++  ESysEPROTONOSUPPORT = 1110;
++  ESysESOCKTNOSUPPORT = 1111;
++  ESysEOPNOTSUPP = 1112;
++  ESysEPFNOSUPPORT = 1113;
++  ESysEAFNOSUPPORT = 1114;
++  ESysEADDRINUSE = 1115;
++  ESysEADDRNOTAVAIL = 1116;
++  ESysENETDOWN = 1117;
++  ESysENETUNREACH = 1118;
++  ESysENETRESET = 1119;
++  ESysECONNABORTED = 1120;
++  ESysECONNRESET = 1121;
++  ESysENOBUFS = 1122;
++  ESysEISCONN = 1123;
++  ESysENOTCONN = 1124;
++  ESysESHUTDOWN = 1125;
++  ESysETOOMANYREFS = 1126;
++  ESysETIMEDOUT = 1127;
++  ESysECONNREFUSED = 1128;
++  ESysEHOSTDOWN = 1129;
++  ESysEHOSTUNREACH = 1130;
++  ESysEPROCLIM = 1131;
++  ESysEUSERS = 1132;
++  ESysEDQUOT = 1133;
++  ESysESTALE = 1134;
++  ESysEREMOTE = 1135;
++  ESysENOSTR = 1136;
++  ESysETIME = 1137;
++  ESysENOSR = 1138;
++  ESysENOMSG = 1139;
++  ESysEBADMSG = 1140;
++  ESysEIDRM = 1141;
++  ESysENONET = 1142;
++  ESysERREMOTE = 1143;
++  ESysENOLINK = 1144;
++  ESysEADV = 1145;
++  ESysESRMNT = 1146;
++  ESysECOMM = 1147;
++  ESysEPROTO = 1148;
++  ESysEMULTIHOP = 1149;
++  ESysEDOTDOT = 1150;
++  ESysEREMCHG = 1151;
++  ESysECANCELED = 1152;
++  ESysEINTRNODATA = 1159;
++  ESysENOREUSE = 1160;
++  ESysENOMOVE = 1161;
+diff --git a/rtl/zos/errnostr.inc b/rtl/zos/errnostr.inc
+new file mode 100644
+index 00000000..8e6ebf3e
+--- /dev/null
++++ b/rtl/zos/errnostr.inc
+@@ -0,0 +1,22 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2006 by Florian Klaempfl
++
++    Contains SunOS specific errors for error.pp in rtl/unix
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++const
++  sys_errn = 128;
++
++{ since we're libc-based, just just the libc version }
++var
++  sys_errlist:array[0..sys_errn-1] of PAnsiChar; cvar; external;
++
+diff --git a/rtl/zos/osdefs.inc b/rtl/zos/osdefs.inc
+new file mode 100644
+index 00000000..f542e171
+--- /dev/null
++++ b/rtl/zos/osdefs.inc
+@@ -0,0 +1,16 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2002 Marco van de Voort
++    member of the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ ****************************************************************************}
++
++{define usedomain}             // Allow uname with "domain" entry.
++                                // (which is a GNU extension)
++
+diff --git a/rtl/zos/osmacro.inc b/rtl/zos/osmacro.inc
+new file mode 100644
+index 00000000..61968941
+--- /dev/null
++++ b/rtl/zos/osmacro.inc
+@@ -0,0 +1,94 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2002 Marco van de Voort
++    member of the Free Pascal development team.
++
++    The "linux" posixy macro's that are used both in the Baseunix unit as the
++    system unit. Not aliased via public names because I want these to be
++    inlined as much as possible in the future.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++function FpS_ISDIR(m : TMode): boolean;
++
++begin
++  FpS_ISDIR:=((m and S_IFMT) = S_IFDIR);
++end;
++
++function FpS_ISCHR(m : TMode): boolean;
++begin
++  FpS_ISCHR:=((m and S_IFMT) = S_IFCHR);
++end;
++
++function FpS_ISBLK(m : TMode): boolean;
++begin
++ FpS_ISBLK:=((m and S_IFMT) = S_IFBLK);
++end;
++
++function FpS_ISREG(m : TMode): boolean;
++begin
++ FpS_ISREG:=((m and S_IFMT) = S_IFREG);
++end;
++
++function FpS_ISFIFO(m : TMode): boolean;
++begin
++ FpS_ISFIFO:=((m and S_IFMT) = S_IFIFO);
++end;
++
++Function FPS_ISLNK(m:TMode):boolean;
++
++begin
++ FPS_ISLNK:=((m and S_IFMT) = S_IFLNK);
++end;
++
++Function FPS_ISSOCK(m:TMode):boolean;
++
++begin
++ FPS_ISSOCK:=((m and S_IFMT) = S_IFSOCK);
++end;
++
++{ wait status macros as in the z/OS header sys/wait.h }
++function wifexited(status : cint): boolean;
++begin
++ wifexited:=(status AND $FF) =0;
++end;
++
++function wexitstatus(status : cint): cint;
++begin
++ wexitstatus:=(status and $FF00) shr 8;
++end;
++
++function wstopsig(status : cint): cint;
++begin
++ wstopsig:=(status and $FF00) shr 8;
++end;
++
++function wifstopped_zos(status : cint): boolean;
++begin
++ case status and $FF of
++   $7F,$7E,$7D,$7B,$7A,$78,$77:
++     wifstopped_zos:=true;
++   else
++     wifstopped_zos:=false;
++ end;
++end;
++
++function wifsignaled(status : cint): boolean;
++begin
++ wifsignaled:=not wifstopped_zos(status) and
++   ((status and $FF)<>0) and ((status and $FF)<>$79);
++end;
++
++function wtermsig(status : cint):cint;
++
++begin
++ wtermsig:=cint(status and 127);
++end;
++
+diff --git a/rtl/zos/ostypes.inc b/rtl/zos/ostypes.inc
+new file mode 100644
+index 00000000..5e190b9c
+--- /dev/null
++++ b/rtl/zos/ostypes.inc
+@@ -0,0 +1,230 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team
++
++    OS specific types and constants for z/OS UNIX System Services
++    (64 bit, XPLINK, ASCII mode).
++
++    Layouts and values were determined on z/OS with a C probe
++    (zos-pascal-llvm: pf1/probe/zosprobe.c). Padding fields make the
++    records match the C layout exactly; many z/OS structures contain
++    additional fields not needed by the RTL.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{$i ptypes.inc}
++
++CONST
++   FD_MAXFDSET     = 2047;          { fd_set has 256 bytes }
++   BITSINWORD      = 8*sizeof(cuint);
++   wordsinsigset   = 2;             { sigset_t has 8 bytes }
++   wordsinfdset    = (FD_MAXFDSET+1+BITSINWORD-1) DIV BITSINWORD;
++   ln2bitsinword   = 5;
++   ln2bitmask      = 1 shl ln2bitsinword - 1;
++
++   UTSNAME_LENGTH = 32;
++
++TYPE
++   { struct stat (216 bytes) }
++   stat = record
++     st_eye     : array[0..3] of AnsiChar;  { eye catcher }
++     st_length  : cushort;
++     st_version : cushort;
++     st_mode    : mode_t;
++     st_ino     : ino_t;
++     st_dev     : dev_t;
++     st_nlink   : nlink_t;
++     st_uid     : uid_t;
++     st_gid     : gid_t;
++     st_size    : off_t;
++     __pad0     : array[0..11] of byte;   { 31 bit time fields }
++     st_rdev    : dev_t;
++     __pad1     : array[0..7] of byte;
++     st_blksize : blksize_t;
++     __pad2     : array[0..35] of byte;
++     st_blocks  : blkcnt_t;
++     __pad3     : array[0..39] of byte;
++     st_atime   : time_t;
++     st_mtime   : time_t;
++     st_ctime   : time_t;
++     __pad4     : array[0..39] of byte;
++   end;
++   TStat             = Stat;
++   PStat             = ^Stat;
++
++   flock    = record
++                l_type  : cshort;       { lock type: read/write, etc. }
++                l_whence: cshort;       { type of l_start }
++                l_start : off_t;        { starting offset }
++                l_len   : off_t;        { len = 0 means until end of file }
++                l_pid   : pid_t;        { lock owner }
++                end;
++   TFlock   = flock;
++   pFlock   = ^flock;
++
++   TFDSetEl = cuint;
++   TFDSet    = array[0..wordsinfdset-1] of TFDSetEl;
++   pFDSet    = ^TFDSet;
++
++   timezone = record
++     tz_minuteswest,tz_dsttime:cint;
++   end;
++   ptimezone =^timezone;
++   TTimeZone = timezone;
++
++   { struct utsname (80 bytes) }
++   utsname = record
++     sysname  : array[0..15] of AnsiChar;
++     nodename : array[0..31] of AnsiChar;
++     release  : array[0..7] of AnsiChar;
++     version  : array[0..7] of AnsiChar;
++     machine  : array[0..15] of AnsiChar;
++   end;
++
++   UTimBuf   = Record
++                 actime  : time_t;
++                 modtime : time_t;
++                end;
++   TUtimBuf  = UtimBuf;
++   pUtimBuf  = ^UtimBuf;
++
++   { struct dirent (272 bytes) }
++   pdirent = ^dirent;
++   dirent = record
++     __pad0   : array[0..3] of byte;
++     d_ino    : ino_t;
++     __pad1   : array[0..7] of byte;
++     d_name   : array[0..255] of AnsiChar;
++   end;
++
++   { DIR is opaque on z/OS }
++   pdir = ^dir;
++   dir = record
++   end;
++
++CONST
++    { access }
++    F_OK        = 8;
++    R_OK        = 4;
++    W_OK        = 2;
++    X_OK        = 1;
++
++    SEEK_SET    = 0;
++    SEEK_CUR    = 1;
++    SEEK_END    = 2;
++
++    { open }
++    O_RDONLY    = 2;
++    O_WRONLY    = 1;
++    O_RDWR      = 3;
++    O_ACCMODE   = 3;
++    O_CREAT     = $80;
++    O_EXCL      = $40;
++    O_NOCTTY    = $20;
++    O_TRUNC     = $10;
++    O_APPEND    = $08;
++    O_NONBLOCK  = $04;
++    O_SYNC      = $100;
++
++    { mode_t; note that the file type is in the high byte on z/OS }
++    S_IFMT   = $FF000000;
++    S_IFIFO  = $04000000;
++    S_IFCHR  = $02000000;
++    S_IFDIR  = $01000000;
++    S_IFBLK  = $06000000;
++    S_IFREG  = $03000000;
++    S_IFLNK  = $05000000;
++    S_IFSOCK = $07000000;
++
++    S_ISUID = &4000;
++    S_ISGID = &2000;
++    S_ISVTX = &1000;
++    S_IRUSR = &400;
++    S_IWUSR = &200;
++    S_IXUSR = &100;
++    S_IRGRP = &40;
++    S_IWGRP = &20;
++    S_IXGRP = &10;
++    S_IROTH = &4;
++    S_IWOTH = &2;
++    S_IXOTH = &1;
++
++    WNOHANG   = $01;
++    WUNTRACED = $02;
++
++    { fcntl }
++    F_DupFd  = 0;
++    F_GetFd  = 1;
++    F_SetFd  = 2;
++    F_GetFl  = 259;
++    F_SetFl  = 4;
++    F_GetLk  = 5;
++    F_SetLk  = 6;
++    F_SetLkW = 7;
++    FD_CLOEXEC = 1;
++    F_RDLCK  = 1;
++    F_WRLCK  = 2;
++    F_UNLCK  = 3;
++
++    { mmap }
++    PROT_READ  = 1;
++    PROT_WRITE = 2;
++    PROT_EXEC  = 8;
++    PROT_NONE  = 4;
++    MAP_SHARED  = 2;
++    MAP_PRIVATE = 1;
++    MAP_FIXED   = 4;
++    MAP_FAILED  = pointer(-1);
++
++type
++  rlim_t = cULong;
++  PRLimit = ^TRLimit;
++  TRLimit = record
++    rlim_cur : rlim_t;
++    rlim_max : rlim_t;
++  end;
++
++  iovec = record
++            iov_base : pointer;
++            iov_len  : size_t;
++           end;
++  tiovec=iovec;
++  piovec=^tiovec;
++
++  tms = record
++         tms_utime  : clock_t;  { User CPU time }
++         tms_stime  : clock_t;  { System CPU time }
++         tms_cutime : clock_t;  { User CPU time of terminated child procs }
++         tms_cstime : clock_t;  { System CPU time of terminated child procs }
++        end;
++  TTms= tms;
++  pTms= ^tms;
++
++const
++  POLLIN      = $0003;
++  POLLPRI     = $0010;
++  POLLOUT     = $0004;
++  POLLERR     = $0020;
++  POLLHUP     = $0040;
++  POLLNVAL    = $0080;
++
++type
++  pollfd = record
++    fd: cint;
++    events: cshort;
++    revents: cshort;
++  end;
++  tpollfd = pollfd;
++  ppollfd = ^pollfd;
++
++type
++  TTimespecArr  = array[0..1] of ttimespec;
++
++{$i signal.inc}
+diff --git a/rtl/zos/pthread.inc b/rtl/zos/pthread.inc
+new file mode 100644
+index 00000000..1c8abe20
+--- /dev/null
++++ b/rtl/zos/pthread.inc
+@@ -0,0 +1,129 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 1999-2000 by Peter Vreman
++    Copyright (c) 2011 by Jonas Maebe
++    members of the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This file contains a pthread.h headerconversion,
++    and should contain an interface to the threading library to be
++    used by systhrd, preferably in a somewhat compatible notation
++    (compared to the other OSes).
++
++    As a start, I simply used libc_r
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++  const
++    PTHREAD_EXPLICIT_SCHED       = 1;
++    PTHREAD_INHERIT_SCHED        = 0;
++    PTHREAD_CREATE_DETACHED      = 1;
++    PTHREAD_SCOPE_PROCESS        = 1;
++
++    _PTHREAD_MUTEX_NORMAL        = 5;
++    _PTHREAD_MUTEX_ERRORCHECK    = 3;
++    _PTHREAD_MUTEX_RECURSIVE     = 4;
++
++  type
++    sched_param = record
++      __sched_priority: cint;
++      __sched_policy  : cint;
++      __sched_reserved: array[0..5] of cint;
++    end;
++
++    sem_t = cint;
++
++    psem_t      = ^sem_t;
++    TSemaphore  = sem_t;
++    PSemaphore  = ^TSemaphore;
++
++
++    ppthread_t           = ^pthread_t;
++    ppthread_key_t       = ^pthread_key_t;
++    ppthread_mutex_t     = ^pthread_mutex_t;
++    ppthread_attr_t      = ^pthread_attr_t;
++    __destr_func_t       = procedure (p :pointer);cdecl;
++    __startroutine_t     = function (p :pointer):pointer;cdecl;
++    ppthread_mutexattr_t = ^pthread_mutexattr_t;
++    ppthread_cond_t      = ^pthread_cond_t;
++    ppthread_condattr_t  = ^pthread_condattr_t;
++
++    pthread_spinlock_t = record
++{$ifdef cpu64}
++      __sp_word: array[0..2] of clong;
++{$else}
++      __sp_word: array[0..5] of cint;
++{$endif}
++    end;
++
++    _once = record
++{$ifdef cpu64}
++      __on_word: array[0..8] of clong;
++{$else}
++      __on_word: array[0..27] of cint;
++{$endif}
++    end;
++
++    pthread_once_t = _once;
++
++    pthread_barrier_t = record
++{$ifdef cpu64}
++      __ba_word: array[0..4] of clong;
++{$else}
++      __ba_word: array[0..7] of cint;
++{$endif}
++    end;
++
++    pthread_barrierattr_t = pointer;
++
++function  pthread_getspecific      (t : pthread_key_t):pointer; cdecl; external 'c';
++function  pthread_setspecific      (t : pthread_key_t;p:pointer):cint; cdecl; external 'c';
++function  pthread_key_create       (p : ppthread_key_t;f: __destr_func_t):cint; cdecl;external 'c';
++function  pthread_attr_init           (p : ppthread_key_t):cint; cdecl; external 'c';
++function  pthread_attr_destroy(_para1:Ppthread_attr_t):cint;cdecl;external 'c';
++function  pthread_attr_setinheritsched(p : ppthread_attr_t;i:cint):cint; cdecl; external 'c';
++function  pthread_attr_setscope      (p : ppthread_attr_t;i:cint):cint;cdecl;external 'c';
++function  pthread_attr_setdetachstate (p : ppthread_attr_t;i:cint):cint;cdecl;external 'c';
++function  pthread_attr_setstacksize(p: ppthread_attr_t; stacksize: size_t):cint;cdecl;external 'c';
++function  pthread_create ( p: ppthread_t;attr : ppthread_attr_t;f:__startroutine_t;arg:pointer):cint;cdecl;external 'c';
++procedure pthread_exit  ( p: pointer); cdecl;external 'c';
++function  pthread_self:pthread_t; cdecl;external 'c';
++function  pthread_mutex_init (p:ppthread_mutex_t;o:ppthread_mutexattr_t):cint; cdecl;external 'c';
++function  pthread_mutex_destroy (p:ppthread_mutex_t):cint; cdecl;external 'c';
++function  pthread_mutex_lock    (p:ppthread_mutex_t):cint; cdecl;external 'c';
++function  pthread_mutex_trylock (p:ppthread_mutex_t):cint; cdecl;external 'c';
++function  pthread_mutex_unlock  (p:ppthread_mutex_t):cint; cdecl;external 'c';
++function  pthread_cancel(_para1:pthread_t):cint;cdecl;external 'c';
++function  pthread_detach(_para1:pthread_t):cint;cdecl;external 'c';
++function  pthread_join(_para1:pthread_t; _para2:Ppointer):cint;cdecl;external 'c';
++function  pthread_cond_destroy(_para1:Ppthread_cond_t):cint;cdecl;external 'c' name 'pthread_cond_destroy';
++function  pthread_cond_init(_para1:Ppthread_cond_t;_para2:Ppthread_condattr_t):cint;cdecl;external  'c' name 'pthread_cond_init';
++function  pthread_cond_signal(_para1:Ppthread_cond_t):cint;cdecl;external 'c' name 'pthread_cond_signal';
++function  pthread_cond_broadcast(_para1:Ppthread_cond_t):cint;cdecl;external 'c' name 'pthread_cond_broadcast';
++function  pthread_cond_wait(_para1:Ppthread_cond_t;_para2:Ppthread_mutex_t):cint;cdecl;external 'c' name 'pthread_cond_wait';
++function pthread_kill(__thread:pthread_t; __signo:cint):cint;cdecl;external 'c';
++function pthread_sigmask(how: cint; nset: psigset; oset: psigset): cint; cdecl; external 'c';
++
++function sem_init(__sem:Psem_t; __pshared:cint;__value:cuint):cint;cdecl; external 'c' name 'sem_init';
++function sem_destroy(__sem:Psem_t):cint;cdecl;external 'c' name 'sem_destroy';
++function sem_close(__sem:Psem_t):cint;cdecl;external 'c'  name 'sem_close';
++function sem_unlink(__name:PAnsiChar):cint;cdecl;external 'c' name 'sem_unlink';
++function sem_wait(__sem:Psem_t):cint;cdecl;external 'c'  name 'sem_wait';
++function sem_timedwait(__sem: Psem_t; const __timespec: ptimespec): cint;cdecl; external 'c' name 'sem_timedwait';
++function sem_trywait(__sem:Psem_t):cint;cdecl;external 'c'  name 'sem_trywait';
++function sem_post(__sem:Psem_t):cint;cdecl;external 'c'  name 'sem_post';
++function sem_getvalue(__sem:Psem_t; __sval:Pcint):cint;cdecl;external 'c'  name 'sem_getvalue';
++
++
++function pthread_mutexattr_init(_para1:Ppthread_mutexattr_t):cint;cdecl;external 'c' name 'pthread_mutexattr_init';
++function pthread_mutexattr_destroy(_para1:Ppthread_mutexattr_t):cint;cdecl;external 'c' name 'pthread_mutexattr_destroy';
++function pthread_mutexattr_gettype(_para1:Ppthread_mutexattr_t; _para2:Pcint):cint;cdecl;external 'c' name 'pthread_mutexattr_gettype';
++function pthread_mutexattr_settype(_para1:Ppthread_mutexattr_t; _para2:cint):cint;cdecl;external 'c' name 'pthread_mutexattr_settype';
++function pthread_cond_timedwait(__cond:ppthread_cond_t; __mutex:ppthread_mutex_t; __abstime:ptimespec):cint; cdecl;external 'c' name 'pthread_cond_timedwait';
++
+diff --git a/rtl/zos/ptypes.inc b/rtl/zos/ptypes.inc
+new file mode 100644
+index 00000000..e57ec738
+--- /dev/null
++++ b/rtl/zos/ptypes.inc
+@@ -0,0 +1,166 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Base POSIX types and limits for z/OS (64 bit, XPLINK).
++
++    Sizes, signedness and layouts were determined on z/OS with a C probe
++    compiled with the same macros as the rest of the port
++    (zos-pascal-llvm: pf1/probe/zosprobe.c).
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{$I ctypes.inc}
++{$packrecords c}
++
++Type
++    dev_t    = cuint;
++    TDev     = dev_t;
++    pDev     = ^dev_t;
++
++    gid_t    = cint;
++    TGid     = gid_t;
++    pGid     = ^gid_t;
++    TIOCtlRequest = cInt;
++
++    ino_t    = cuint;
++    TIno     = ino_t;
++    pIno     = ^ino_t;
++    ino64_t  = cuint64;
++
++    mode_t   = cint;
++    TMode    = mode_t;
++    pMode    = ^mode_t;
++
++    nlink_t  = cint;
++    TnLink   = nlink_t;
++    pnLink   = ^nlink_t;
++
++    off_t    = clong;
++    TOff     = off_t;
++    pOff     = ^off_t;
++
++    pid_t    = cint;
++    TPid     = pid_t;
++    pPid     = ^pid_t;
++
++    size_t   = culong;
++    ssize_t  = clong;
++    clock_t  = cuint;
++    time_t   = clong;
++
++    wint_t    = cint;
++    TSize     = size_t;
++    pSize     = ^size_t;
++    psize_t   = pSize;
++    TSSize    = ssize_t;
++    pSSize    = ^ssize_t;
++    TClock    = clock_t;
++    pClock    = ^clock_t;
++    // TTime    = time_t;    // Not allowed in system unit, -> unixtype
++    pTime     = ^time_t;
++    ptime_t   = ^time_t;
++
++    clockid_t = cuint;
++    caddr_t   = ^AnsiChar;
++
++    uint32_t = cuint32;
++    int32_t = cint32;
++    uint16_t = cuint16;
++    uint_t    = cuint;
++    uintptr_t = ^cuint;
++
++    wchar_t   = cuint;
++    pwchar_t  = ^wchar_t;
++
++    uid_t    = cint;
++    TUid     = uid_t;
++    pUid     = ^uid_t;
++
++    socklen_t= cuint;
++    TSockLen = socklen_t;
++    pSockLen = ^socklen_t;
++
++    suseconds_t = cint;
++    blksize_t = cint;
++    blkcnt_t = clong;
++    key_t = cint;
++    id_t = cint;
++
++  { z/OS: tv_usec follows 4 padding bytes }
++  timeval     = record
++                 tv_sec  : time_t;
++                 __pad   : cint;
++                 tv_usec : suseconds_t;
++                end;
++  ptimeval    = ^timeval;
++  TTimeVal    = timeval;
++
++  timespec    = record
++                 tv_sec   : time_t;
++                 tv_nsec  : clong;
++                end;
++  ptimespec   = ^timespec;
++  TTimeSpec   = timespec;
++
++  fsblkcnt_t = culong;
++
++  TStatfs = record
++    dummy: array[0..255] of byte;
++  end;
++  PStatFS=^TStatFS;
++
++  mbstate_t = record
++    _data: array[0..1] of byte;
++  end;
++  pmbstate_t = ^mbstate_t;
++
++const
++    ARG_MAX        = 262144;   { Maximum number of argument size (not a constant on z/OS) }
++    NAME_MAX       = 255;      { Maximum number of bytes in filename }
++    PATH_MAX       = 1023;     { Maximum number of bytes in pathname (1024 incl. #0) }
++    SYS_NMLN       = 32;
++    SIG_MAXSIG     = 63;       { highest signal number }
++
++    Prio_Process = 1;
++    Prio_PGrp    = 2;
++    Prio_User    = 3;
++
++ type
++    { the pthread types are opaque structures on z/OS }
++    pthread_t = record
++      __: array[0..7] of byte;
++    end;
++    pthread_attr_t = record
++      __: array[0..12] of qword;
++    end;
++    pthread_mutexattr_t = record
++      __: array[0..7] of byte;
++    end;
++    pthread_cond_t = record
++      __: array[0..7] of byte;
++    end;
++    pthread_condattr_t = record
++      __: array[0..7] of byte;
++    end;
++    pthread_key_t = record
++      __: array[0..7] of byte;
++    end;
++    pthread_mutex_t = record
++      __: qword;
++    end;
++    pthread_rwlock_t = record
++      __: array[0..7] of byte;
++    end;
++    pthread_once_t = record
++      __: cint;
++    end;
++
++    sem_t = cint;
+diff --git a/rtl/zos/rtldefs.inc b/rtl/zos/rtldefs.inc
+new file mode 100644
+index 00000000..3376428f
+--- /dev/null
++++ b/rtl/zos/rtldefs.inc
+@@ -0,0 +1,24 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2012 by Free Pascal development team
++
++    This file contains platform-specific defines that are used in
++    multiple RTL units.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{ the single byte OS APIs always use UTF-8 }
++{ define FPCRTL_FILESYSTEM_UTF8}
++
++{ The OS supports a single byte file system operations API that we use }
++{$define FPCRTL_FILESYSTEM_SINGLE_BYTE_API}
++
++{ The OS supports a two byte file system operations API that we use }
++{ define FPCRTL_FILESYSTEM_TWO_BYTE_API}
+diff --git a/rtl/zos/sighnd.inc b/rtl/zos/sighnd.inc
+new file mode 100644
+index 00000000..72890935
+--- /dev/null
++++ b/rtl/zos/sighnd.inc
+@@ -0,0 +1,39 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Signal handler for z/OS: converts synchronous signals into run-time
++    errors. Resuming at HandleErrorAddrFrame through the machine context
++    (as on other targets) is not implemented; the error is reported
++    directly from the signal handler.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++procedure SignalToRunerror(Sig: longint; info : PSigInfo; SigContext:PSigContext); cdecl;
++var
++  res : word;
++begin
++  res:=0;
++  case sig of
++    SIGFPE:
++      res:=207;
++    SIGILL,
++    SIGBUS,
++    SIGSEGV:
++      res:=216;
++    SIGINT:
++      res:=217;
++    SIGQUIT:
++      res:=233;
++  end;
++  reenable_signal(sig);
++  if res<>0 then
++    HandleErrorAddrFrame(res,nil,nil);
++end;
+diff --git a/rtl/zos/sighndh.inc b/rtl/zos/sighndh.inc
+new file mode 100644
+index 00000000..c379cd31
+--- /dev/null
++++ b/rtl/zos/sighndh.inc
+@@ -0,0 +1,19 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team
++
++    TSigContext for z/OS (the ucontext is not interpreted by the RTL)
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++type
++  PSigContext = ^TSigContext;
++  TSigContext = record
++  end;
+diff --git a/rtl/zos/signal.inc b/rtl/zos/signal.inc
+new file mode 100644
+index 00000000..afa3103e
+--- /dev/null
++++ b/rtl/zos/signal.inc
+@@ -0,0 +1,108 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Signal numbers and types for z/OS UNIX System Services
++    (values determined on z/OS, see ostypes.inc)
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++Const
++  SIGHUP     =  1;
++  SIGINT     =  2;
++  SIGABRT    =  3;
++  SIGILL     =  4;
++  SIGPOLL    =  5;
++  SIGURG     =  6;
++  SIGSTOP    =  7;
++  SIGFPE     =  8;
++  SIGKILL    =  9;
++  SIGBUS     = 10;
++  SIGSEGV    = 11;
++  SIGSYS     = 12;
++  SIGPIPE    = 13;
++  SIGALRM    = 14;
++  SIGTERM    = 15;
++  SIGUSR1    = 16;
++  SIGUSR2    = 17;
++  SIGCONT    = 19;
++  SIGCHLD    = 20;
++  SIGTTIN    = 21;
++  SIGTTOU    = 22;
++  SIGIO      = 23;
++  SIGQUIT    = 24;
++  SIGTSTP    = 25;
++  SIGTRAP    = 26;
++  SIGWINCH   = 28;
++  SIGXCPU    = 29;
++  SIGXFSZ    = 30;
++  SIGVTALRM  = 31;
++  SIGPROF    = 32;
++
++  SIGIOT     = SIGABRT;
++  SIGCLD     = SIGCHLD;
++
++  SIG_BLOCK   = 0;
++  SIG_UNBLOCK = 1;
++  SIG_SETMASK = 2;
++
++  SIG_DFL = pointer(0);
++  SIG_IGN = pointer(1);
++  SIG_ERR = pointer(-1);
++
++  { sa_flags }
++  SA_NOCLDSTOP = cint($80000000);
++  SA_ONSTACK   = $20000000;
++  SA_RESETHAND = $10000000;
++  SA_RESTART   = $08000000;
++  SA_SIGINFO   = $04000000;
++  SA_NODEFER   = $01000000;
++
++  { si_code values for SIGFPE are not needed by the RTL on z/OS (the
++    runtime error is derived from the signal only) }
++
++type
++  { sigset_t: 8 bytes; always manipulated through the C library }
++  SigSet  = array[0..wordsinsigset-1] of cuint;
++  sigset_t= SigSet;
++  PSigSet = ^SigSet;
++  psigset_t=psigset;
++  TSigSet = SigSet;
++
++  { siginfo_t (64 bytes) }
++  psiginfo = ^tsiginfo;
++  tsiginfo = record
++       si_signo : cint;
++       si_errno : cint;
++       si_code  : cint;
++       __pad0   : array[0..27] of byte;
++       si_addr  : pointer;
++       __pad1   : array[0..15] of byte;
++    end;
++
++{ CPU dependent TSigContext }
++{$i sighndh.inc}
++
++type
++  SignalHandler   = Procedure(Sig : Longint);cdecl;
++  PSignalHandler  = ^SignalHandler;
++  SignalRestorer  = Procedure;cdecl;
++  PSignalRestorer = ^SignalRestorer;
++  SigActionHandler = procedure(sig : longint; SigInfo: PSigInfo; SigContext: PSigContext);cdecl;
++
++  { struct sigaction (32 bytes) }
++  SigActionRec = record
++    sa_handler  : SigActionHandler;
++    Sa_Mask     : SigSet;
++    Sa_Flags    : cint;
++    __pad       : array[0..11] of byte;
++  end;
++  TSigActionRec = SigActionRec;
++  PSigActionRec = ^SigActionRec;
+diff --git a/rtl/zos/suuid.inc b/rtl/zos/suuid.inc
+new file mode 100644
+index 00000000..2cfaa7cf
+--- /dev/null
++++ b/rtl/zos/suuid.inc
+@@ -0,0 +1,54 @@
++{
++    $Id: sysutils.pp,v 1.59 2005/03/25 22:53:39 jonas Exp $
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2006 by Florian Klaempfl
++    member of the Free Pascal development team
++
++    uuidgen for Solaris
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++Const
++  RandomDevice  = '/dev/urandom';
++
++
++Function GetURandomBytes(Var Buf; NBytes : Integer) : Boolean;
++
++Var
++  fd,I : Integer;
++  P : PByte;
++
++begin
++  P:=@Buf;
++  fd:=FileOpen(RandomDevice,fmOpenRead);
++  Result:=(fd>=0);
++  if Result then
++    Try
++      While (NBytes>0) do
++        begin
++        I:=FileRead(fd,P^,nbytes);
++        If I>0 then
++          begin
++          Inc(P,I);
++          Dec(NBytes,I);
++          end;
++        end;
++    Finally
++      FileClose(Fd);
++    end;
++end;
++
++
++Function SysCreateGUID(out GUID : TGUID) : Integer;
++
++begin
++  if not GetUrandomBytes(Guid,SizeOf(GUID)) then
++    GetRandomBytes(GUID,SizeOf(Guid));
++  Result:=0;
++end;
+diff --git a/rtl/zos/sysheap.inc b/rtl/zos/sysheap.inc
+new file mode 100644
+index 00000000..3f714bed
+--- /dev/null
++++ b/rtl/zos/sysheap.inc
+@@ -0,0 +1,39 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team
++
++    OS memory allocation for the heap manager on z/OS
++
++    z/OS mmap() does not support anonymous mappings, so the memory for the
++    Pascal heap manager is taken from the C runtime (malloc/free).
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++function c_malloc(size: size_t): pointer; cdecl; external clib name 'malloc';
++procedure c_free(p: pointer); cdecl; external clib name 'free';
++
++{$define HAS_SYSOSALLOC}
++
++const
++  { malloc() does not zero the memory }
++  SysOSAllocZeroesIfAtLeast=high(ptruint);
++
++function SysOSAlloc(size: ptruint): pointer;
++begin
++  result:=c_malloc(size);
++end;
++
++
++{$define HAS_SYSOSFREE}
++
++procedure SysOSFree(p: pointer; size: ptruint);
++begin
++  c_free(p);
++end;
+diff --git a/rtl/zos/sysos.inc b/rtl/zos/sysos.inc
+new file mode 100644
+index 00000000..1710e0c0
+--- /dev/null
++++ b/rtl/zos/sysos.inc
+@@ -0,0 +1,111 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2001 by Free Pascal development team
++
++    This file implements all the base types and limits required
++    for a minimal POSIX compliant subset required to port the compiler
++    to a new OS.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++const clib = 'c';
++
++type libcint=longint;
++     plibcint=^libcint;
++
++{ errno is (*__errno()) on z/OS }
++function geterrnolocation: Plibcint; cdecl;external clib name '__errno';
++
++function geterrno:libcint; [public, alias: 'FPC_SYS_GETERRNO'];
++begin
++ geterrno:=geterrnolocation^;
++end;
++
++procedure seterrno(err:libcint); [public, alias: 'FPC_SYS_SETERRNO'];
++begin
++  geterrnolocation^:=err;
++end;
++
++{ OS dependant parts  }
++
++{$I errno.inc}                          // error numbers
++{$I ostypes.inc}                        // c-types, unix base types, unix base structures
++{$I osmacro.inc}
++
++{$Linklib c}
++{$i oscdeclh.inc}
++{$i oscdecl.inc}
++
++{*****************************************************************************
++                            Error conversion
++*****************************************************************************}
++
++Function PosixToRunError  (PosixErrno : longint) : longint;
++{
++  Convert ErrNo error to the correct Inoutres value
++}
++
++begin
++  if PosixErrNo=0 then { Else it will go through all the cases }
++   exit(0);
++  case PosixErrNo of
++   ESysENFILE,
++   ESysEMFILE : Inoutres:=4;
++   ESysENOENT : Inoutres:=2;
++    ESysEBADF : Inoutres:=6;
++   ESysENOMEM,
++   ESysEFAULT : Inoutres:=217;
++   ESysEINVAL : Inoutres:=218;
++    ESysEPIPE,
++    ESysEINTR,
++      ESysEIO,
++   ESysEAGAIN,
++   ESysENOSPC : Inoutres:=101;
++ ESysENAMETOOLONG : Inoutres := 3;
++    ESysEROFS,
++   ESysEEXIST,
++   ESysEBusy,
++   ESysENOTDIR,        // busy, enotdir, mantis #25931
++   ESysEACCES : Inoutres:=5;
++   ESysEISDIR : InOutRes:=5;
++  else
++    begin
++       InOutRes := Integer(PosixErrno);
++    end;
++  end;
++ PosixToRunError:=InOutRes;
++end;
++
++Function Errno2InoutRes : longint;
++
++begin
++  Errno2InoutRes:=PosixToRunError(getErrno);
++  InoutRes:=Errno2InoutRes;
++end;
++
++
++
++{*****************************************************************************
++                          Low Level File Routines
++*****************************************************************************}
++
++function do_isdevice(handle:longint):boolean;
++var
++  StatRec: Stat;
++begin
++  fpFStat (Handle, StatRec);
++  case StatRec.st_Mode and S_IFMT of
++   S_IFCHR, S_IFIFO, S_IFSOCK: Do_IsDevice := true
++  else
++   Do_IsDevice := false;
++  end;
++end;
++
++
+diff --git a/rtl/zos/sysosh.inc b/rtl/zos/sysosh.inc
+new file mode 100644
+index 00000000..7e975627
+--- /dev/null
++++ b/rtl/zos/sysosh.inc
+@@ -0,0 +1,26 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 2026 by the Free Pascal development team
++
++    z/OS dependent system unit header
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++type
++  THandle = Longint;
++  { pthread_t is an 8 byte structure on z/OS }
++  TThreadID = QWord;
++  TOSTimestamp = Int64;
++
++  { pthread_mutex_t (8 bytes) }
++  PRTLCriticalSection = ^TRTLCriticalSection;
++  TRTLCriticalSection = record
++      __mt_word: qword;
++  end;
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+new file mode 100644
+index 00000000..f276a0dc
+--- /dev/null
++++ b/rtl/zos/system.pp
+@@ -0,0 +1,263 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 1999-2000 by the Free Pascal development team.
++    Copyright (c) 2026 by the Free Pascal development team.
++
++    z/OS system unit (z/OS UNIX System Services, 64 bit, XPLINK, running
++    under the Language Environment in ASCII mode with POSIX(ON))
++
++    The C runtime of the Language Environment is used for all operating
++    system services. In ASCII mode the ASCII entry points of the C library
++    are called; the compiler maps the C names (see zosmap.txt).
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++unit System;
++
++interface
++
++{$define FPC_IS_SYSTEM}
++
++{ Itanium-ABI unwind interface (_Unwind_*) for the LLVM exception model;
++  provided by the z/OS port runtime (zos-pascal-llvm: runtime/zosunwind.c) }
++{$L zosunwind.o}
++{ atomic operations for the s390x RTL (runtime/zosatomic.c) }
++{$L zosatomic.o}
++
++{ include system-independent routine headers }
++
++{$I sysunixh.inc}
++
++var argc:longint;
++    argv:PPAnsiChar;
++    envp:PPAnsiChar;
++
++implementation
++
++
++{ OS independant parts}
++
++{$I system.inc}
++
++{*****************************************************************************
++                       Misc. System Dependent Functions
++*****************************************************************************}
++
++procedure pascalmain;external name 'PASCALMAIN';
++
++{ called by the main stub generated by the compiler (C main) }
++procedure FPC_SYSTEMMAIN(argcparam: Longint; argvparam: PPAnsiChar; envpparam: PPAnsiChar); cdecl; [public];
++
++begin
++  argc:=argcparam;
++  argv:=argvparam;
++  envp:=envpparam;
++  pascalmain;  {run the pascal main program}
++end;
++
++
++procedure System_exit;
++begin
++   Fpexit(cint(ExitCode));
++End;
++
++
++Function ParamCount: Longint;
++Begin
++  Paramcount:=argc-1
++End;
++
++
++function paramstr(l: longint) : shortstring;
++ begin
++   { strictly conforming POSIX applications }
++   { have the executing filename as argv[0] }
++     if ( l>= 0) and (l < argc) then
++       paramstr:=strpas(argv[l])
++     else
++       paramstr:='';
++ end;
++
++Procedure Randomize;
++Begin
++  randseed:=longint(Fptime(nil));
++End;
++
++
++{*****************************************************************************
++                         SystemUnit Initialization
++*****************************************************************************}
++
++{ the layout of sigset_t is not documented, use the C library }
++function c_sigemptyset(var s: TSigSet): cint; cdecl; external clib name 'sigemptyset';
++function c_sigaddset(var s: TSigSet; sig: cint): cint; cdecl; external clib name 'sigaddset';
++
++function  reenable_signal(sig : longint) : boolean;
++var
++  e,oe : TSigSet;
++  olderrno: cint;
++begin
++  { this routine is called from a signal handler, so must not change errno }
++  olderrno:=geterrno;
++  c_sigemptyset(e);
++  c_sigemptyset(oe);
++  c_sigaddset(e,sig);
++  fpsigprocmask(SIG_UNBLOCK,@e,@oe);
++  reenable_signal:=geterrno=0;
++  seterrno(olderrno);
++end;
++
++{$i sighnd.inc}
++
++procedure InstallDefaultSignalHandler(signum: longint; out oldact: SigActionRec); public name '_FPC_INSTALLDEFAULTSIGHANDLER';
++var
++  act: SigActionRec;
++begin
++  { Initialize the sigaction structure }
++  { all flags and information set to zero }
++  FillChar(act, sizeof(SigActionRec),0);
++  c_sigemptyset(act.sa_mask);
++  { initialize handler                    }
++  act.sa_handler:=@SignalToRunError;
++  act.sa_flags:=SA_SIGINFO;
++  FpSigAction(signum,act,oldact);
++end;
++
++var
++  oldsigfpe: SigActionRec; public name '_FPC_OLDSIGFPE';
++  oldsigsegv: SigActionRec; public name '_FPC_OLDSIGSEGV';
++  oldsigbus: SigActionRec; public name '_FPC_OLDSIGBUS';
++  oldsigill: SigActionRec; public name '_FPC_OLDSIGILL';
++
++Procedure InstallSignals;
++begin
++  InstallDefaultSignalHandler(SIGFPE,oldsigfpe);
++  InstallDefaultSignalHandler(SIGSEGV,oldsigsegv);
++  InstallDefaultSignalHandler(SIGBUS,oldsigbus);
++  InstallDefaultSignalHandler(SIGILL,oldsigill);
++end;
++
++Procedure RestoreOldSignalHandlers;
++begin
++  FpSigAction(SIGFPE,@oldsigfpe,nil);
++  FpSigAction(SIGSEGV,@oldsigsegv,nil);
++  FpSigAction(SIGBUS,@oldsigbus,nil);
++  FpSigAction(SIGILL,@oldsigill,nil);
++end;
++
++
++procedure SetupCmdLine;
++var
++  bufsize,
++  len,j,
++  size,i : longint;
++  found  : boolean;
++  buf    : PAnsiChar;
++
++  procedure AddBuf;
++  begin
++    sysreallocmem(cmdline,size+bufsize);
++    move(buf^,cmdline[size],bufsize);
++    inc(size,bufsize);
++    bufsize:=0;
++  end;
++
++begin
++  GetMem(buf,ARG_MAX);
++  size:=0;
++  bufsize:=0;
++  i:=0;
++  while (i<argc) do
++   begin
++     len:=strlen(argv[i]);
++     if len>ARG_MAX-2 then
++      len:=ARG_MAX-2;
++     found:=false;
++     for j:=1 to len do
++      if argv[i][j]=' ' then
++       begin
++         found:=true;
++         break;
++       end;
++     if bufsize+len>=ARG_MAX-2 then
++      AddBuf;
++     if found then
++      begin
++        buf[bufsize]:='"';
++        inc(bufsize);
++      end;
++     move(argv[i]^,buf[bufsize],len);
++     inc(bufsize,len);
++     if found then
++      begin
++        buf[bufsize]:='"';
++        inc(bufsize);
++      end;
++     if i<argc-1 then
++      buf[bufsize]:=' '
++     else
++      buf[bufsize]:=#0;
++     inc(bufsize);
++     inc(i);
++   end;
++  AddBuf;
++  FreeMem(buf,ARG_MAX);
++end;
++
++
++procedure SysInitStdIO;
++begin
++  OpenStdIO(Input,fmInput,StdInputHandle);
++  OpenStdIO(Output,fmOutput,StdOutputHandle);
++  OpenStdIO(ErrOutput,fmOutput,StdErrorHandle);
++  OpenStdIO(StdOut,fmOutput,StdOutputHandle);
++  OpenStdIO(StdErr,fmOutput,StdErrorHandle);
++end;
++
++
++function GetProcessID: SizeUInt;
++begin
++ GetProcessID := SizeUInt (fpGetPID);
++end;
++
++function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
++begin
++  result := stklen;
++end;
++
++
++Begin
++  IsConsole := TRUE;
++  StackLength := CheckInitialStkLen(InitialStkLen);
++  StackBottom := Sptr - StackLength;
++  { Set up signals handlers (may be needed by init code to test cpu features) }
++  InstallSignals;
++
++  SysResetFPU;
++  if not(IsLibrary) then
++    SysInitFPU;
++
++{ Setup heap }
++  InitHeap;
++  SysInitExceptions;
++
++  initunicodestringmanager;
++
++{ Setup stdin, stdout and stderr }
++  SysInitStdIO;
++{ Reset IO Error }
++  InOutRes:=0;
++{ Arguments }
++  SetupCmdLine;
++  InitSystemThreads;
++  InitSystemDynLibs;
++  { restore original signal handlers in case this is a library }
++  if IsLibrary then
++    RestoreOldSignalHandlers;
++End.
+diff --git a/rtl/zos/termio.pp b/rtl/zos/termio.pp
+new file mode 100644
+index 00000000..b1dc21d1
+--- /dev/null
++++ b/rtl/zos/termio.pp
+@@ -0,0 +1,47 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 1999-2000 by Peter Vreman
++    member of the Free Pascal development team.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This file contains the termios interface.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{$IFNDEF FPC_DOTTEDUNITS}
++unit termio;
++{$ENDIF FPC_DOTTEDUNITS}
++
++interface
++{$inline on}
++{$IFDEF FPC_DOTTEDUNITS}
++Uses UnixApi.Types,UnixApi.Base,System.CTypes;          // load base UnixApi.Unix typing
++{$ELSE FPC_DOTTEDUNITS}
++Uses UnixType,BaseUnix,ctypes;          // load base unix typing
++{$ENDIF FPC_DOTTEDUNITS}
++
++// load types + consts
++
++{$i termios.inc}
++
++// load default prototypes from unix dir.
++
++{$i termiosh.inc}
++
++implementation
++
++
++
++// load implementation for prototypes from current dir.
++{$i termiosproc.inc}
++
++// load ttyname from unix dir.
++{$i ttyname.inc}
++
++end.
+diff --git a/rtl/zos/termios.inc b/rtl/zos/termios.inc
+new file mode 100644
+index 00000000..4e294af9
+--- /dev/null
++++ b/rtl/zos/termios.inc
+@@ -0,0 +1,615 @@
++{$PACKRECORDS C}
++
++const
++  CBELL = #7;
++{ delete  }
++  CDEL = #127;
++{ ^D  }
++  CEOF = #4;
++{ ^H  }
++  CERASE = #8;
++{ back-slash  }
++  CESC = '\';
++{ ^L  }
++  CFORM = #12;
++{ ^C  }
++  CINTR = #3;
++{ ^U  }
++  CKILL = #21;
++{ null char  }
++  CNUL = #0;
++{ ^\  }
++  CQUIT = #28;
++{ ^Q  }
++  CSTART = #17;
++{ ^S  }
++  CSTOP = #19;
++{ ^K  }
++  CVT = #11;
++{
++ * Ioctl control packet
++  }
++  NCC = 8;
++
++{
++ *  Structure, defines for setting page length
++  }
++{ Set Page Length (Ioctl TCSLEN)  }
++
++const
++  PAGE_SETL = 04;
++{ Paging Ioctl Command Mask (TCSLEN)  }
++  PAGE_MSK = 03;
++{ Enable Paging (TCSLEN)  }
++  PAGE_ON = 01;
++{ Disable Paging (TCSLEN)  }
++  PAGE_OFF = 02;
++{$ifndef PAGE_ENB}
++{ For compatibility with older version  }
++
++const
++  PAGE_ENB = PAGE_ON;
++{$endif}
++type
++  Ptty_page = ^tty_page;
++  tty_page = record
++      tp_flags : AnsiChar;
++      tp_slen : byte;
++    end;
++
++  twinsize = record
++    ws_row, ws_col, ws_xpixel, ws_ypixel: cushort;
++  end;
++
++
++const
++  IOC_VOID = $20000000;
++  IOC_OUT = $40000000;
++  IOC_IN  = $40000000 shl 1;
++  IOCPARM_MASK = $7f;
++
++  TIOCGETD = 	IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 0;	{ get line discipline }
++  TIOCSETD = 	IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 1;	{ set line discipline }
++  TIOCHPCL = 	IOC_VOID or (ord('t') shl 8) or 2;		{ hang up on last close }
++  TIOCMODG = 	IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 3;	{ get modem control state }
++  TIOCMODS = 	IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 4;	{ set modem control state }
++  TIOCM_LE = 	0001;		{ line enable }
++  TIOCM_DTR = 	0002;		{ data terminal ready }
++  TIOCM_RTS = 	0004;		{ request to send }
++  TIOCM_ST = 	0008;		{ secondary transmit }
++  TIOCM_SR = 	0016;		{ secondary receive }
++  TIOCM_CTS = 	0032;		{ clear to send }
++  TIOCM_CAR = 	0064;		{ carrier detect }
++  TIOCM_CD = 	TIOCM_CAR;
++  TIOCM_RNG = 	0128;		{ ring }
++  TIOCM_RI = 	TIOCM_RNG;
++  TIOCM_DSR = 	0256;		{ data set ready }
++//  TIOCGETP = 	IOC_OUT or ((sizeof(struct sgttyb) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 8{ get parameters -- gtty }
++//  TIOCSETP = 	IOC_IN or ((sizeof(struct sgttyb) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 9{ set parameters -- stty }
++//  TIOCSETN = 	IOC_IN or ((sizeof(struct sgttyb) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 10{ as above, but no flushtty }
++  TIOCEXCL = 	IOC_VOID or (ord('t') shl 8) or 13;		{ set exclusive use of tty }
++  TIOCNXCL = 	IOC_VOID or (ord('t') shl 8) or 14;		{ reset exclusive use of tty }
++  TIOCFLUSH = 	IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 16;	{ flush buffers }
++//  TIOCSETC = 	IOC_IN or ((sizeof(struct tchars) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 17{ set special characters }
++//  TIOCGETC = 	IOC_OUT or ((sizeof(struct tchars) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 18{ get special characters }
++  TANDEM = 		$00000001;	{ send stopc on out q full }
++  CBREAK = 		$00000002;	{ half-cooked mode }
++  LCASE = 		$00000004;	{ simulate lower case }
++
++  ECHO = 		$00000008;	{ echo input }
++
++  CRMOD = 		$00000010;	{ map \r to \r\n on output }
++  RAW = 		$00000020;	{ no i/o processing }
++  ODDP = 		$00000040;	{ get/send odd parity }
++  EVENP = 		$00000080;	{ get/send even parity }
++  ANYP = 		$000000c0;	{ get any parity/send none }
++  CRDELAY = 		$00000300;	{ \r delay }
++  CR0 = 	$00000000;
++  CR1 = 	$00000100;	{ tn 300 }
++  CR2 = 	$00000200;	{ tty 37 }
++  CR3 = 	$00000300;	{ concept 100 }
++  TBDELAY = 		$00000c00;	{ horizontal tab delay }
++  TAB0 = 	$00000000;
++
++  TAB1 = 	$00000400;	{ tty 37 }
++  TAB2 = 	$00000800;
++
++  XTABS = 		$00000c00;	{ expand tabs on output }
++  BSDELAY = 		$00001000;	{ \b delay }
++  BS0 = 	$00000000;
++
++  BS1 = 	$00001000;
++
++  VTDELAY = 		$00002000;	{ vertical tab delay }
++  FF0 = 	$00000000;
++
++  FF1 = 	$00002000;	{ tty 37 }
++
++  NLDELAY = 		$0000c000;	{ \n delay }
++
++  NL0 = 	$00000000;
++  NL1 = 	$00004000;	{ tty 37 }
++  NL2 = 	$00008000;	{ vt05 }
++  NL3 = 	$0000c000;
++
++  ALLDELAY = 	(NLDELAY or TBDELAY or CRDELAY or VTDELAY or BSDELAY);
++
++  TOSTOP = 		$00010000;	{ SIGSTOP on bckgnd output }
++
++  PRTERA = 		$00020000;	{ \ ... / erase }
++  CRTERA = 		$00040000;	{ " \b " to wipe out char }
++  TILDE = 		$00080000;	{ hazeltine tilde kludge }
++
++  FLUSHO = 		$00100000;	{ flush output to terminal }
++
++  LITOUT = 		$00200000;	{ literal output }
++  CRTBS = 		$00400000;	{ do backspacing for crt }
++  MDMBUF = 		$00800000;	{ dtr pacing }
++  NOHANG = 		$01000000;	{ no SIGHUP on carrier drop }
++  L001000 = 		$02000000;
++  CRTKIL = 		$04000000;	{ kill line with " \b " }
++  PASS8 = 		$08000000;
++  CTLECH = 		$10000000;	{ echo control chars as ^X }
++
++  PENDIN = 		$20000000;	{ tp->t_rawq needs reread }
++
++  DECCTQ = 		$40000000;	{ only ^Q starts after ^S }
++  NOFLUSH = 		$80000000;	{ no output flush on signal }
++
++
++{ SYS V REL. 4 PTY IOCTLs    }
++  UNLKPT =           IOC_VOID or (ord('t') shl 8) or 70;             { unlock slave pty }
++  ISPTM =            IOC_VOID or (ord('t') shl 8) or 71;             { ret. maj+min of pty master }
++  ISPTS =            IOC_VOID or (ord('t') shl 8) or 73;             { return maj+min of slave }
++  GRTPT =            IOC_VOID or (ord('t') shl 8) or 74;             { grantpt slave pty}
++  RLOGIND =          IOC_VOID or (ord('t') shl 8) or 75;             { for rlogind protocol in ptydd }
++  TELNETDP =         IOC_VOID or (ord('t') shl 8) or 76;             { for telnetd protocol in ptydd }
++
++  TIOCCONS = 	IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 98;	{ become virtual console }
++  TIOCGSID = 	IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 72;	{ get the tty session id }
++
++
++  TIOCLBIS =         IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 127;     { bis local mode bits }
++  TIOCLBIC =         IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 126;     { bic local mode bits }
++  TIOCLSET =         IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 125;     { set entire mode word }
++  TIOCLGET =         IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 124;     { get local modes }
++  LCRTBS =           (CRTBS>>16);
++  LPRTERA =          (PRTERA>>16);
++  LCRTERA =          (CRTERA>>16);
++  LTILDE =           (TILDE>>16);
++  LMDMBUF =          (MDMBUF>>16);
++  LLITOUT =          (LITOUT>>16);
++  LTOSTOP =          (TOSTOP>>16);
++  LFLUSHO =          (FLUSHO>>16);
++  LNOHANG =          (NOHANG>>16);
++  LCRTKIL =          (CRTKIL>>16);
++  LPASS8 =           (PASS8>>16);
++  LCTLECH =          (CTLECH>>16);
++  LPENDIN =          (PENDIN>>16);
++  LDECCTQ =          (DECCTQ>>16);
++  LNOFLSH =          (NOFLUSH>>16);
++  TIOCSBRK =         IOC_VOID or (ord('t') shl 8) or 123;           { set break bit }
++  TIOCCBRK =         IOC_VOID or (ord('t') shl 8) or 122;           { clear break bit }
++  TIOCSDTR =         IOC_VOID or (ord('t') shl 8) or 121;           { set data terminal ready }
++  TIOCCDTR =         IOC_VOID or (ord('t') shl 8) or 120;           { clear data terminal ready }
++  TIOCGPGRP =        IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 119;     { get process group }
++  TIOCSPGRP =        cint(IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 118);      { set process group }
++//  TIOCSLTC =         IOC_IN or ((sizeof(struct ltchars) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 117{ set local special chars }
++//  TIOCGLTC =         IOC_OUT or ((sizeof(struct ltchars) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 116{ get local special chars }
++  TIOCOUTQ =         IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 115;     { output queue size }
++  TIOCSTI =          IOC_IN or ((sizeof(AnsiChar) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 114;    { simulate terminal input }
++  TIOCNOTTY =        IOC_VOID or (ord('t') shl 8) or 113;           { void tty association }
++  TIOCPKT =          IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 112;     { pty: set/clear packet mode }
++  TIOCPKT_DATA =             $00;    { data packet }
++  TIOCPKT_FLUSHREAD =        $01;    { flush packet }
++  TIOCPKT_FLUSHWRITE =       $02;    { flush packet }
++  TIOCPKT_STOP =             $04;    { stop output }
++  TIOCPKT_START =            $08;    { start output }
++  TIOCPKT_NOSTOP =           $10;    { no more ^S, ^Q }
++  TIOCPKT_DOSTOP =           $20;    { now do ^S ^Q }
++  TIOCSTOP =         IOC_VOID or (ord('t') shl 8) or 111;           { stop output, like ^S }
++  TIOCSTART =        IOC_VOID or (ord('t') shl 8) or 110;           { start output, like ^Q }
++  TIOCMSET =         IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 109;     { set all modem bits }
++  TIOCMBIS =         IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 108;     { bis modem bits }
++  TIOCMGET =         IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 106;     { get all modem bits }
++  TIOCREMOTE =       IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 105;     { remote input editing }
++  TIOCGWINSZ =       IOC_OUT or ((sizeof(twinsize) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 104;  { get window size }
++  TIOCSWINSZ =       IOC_IN or ((sizeof(twinsize) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 103;  { set window size }
++  TIOCUCNTL =        IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 102;     { pty: set/clr usr cntl mode }
++  TIOCMIWAIT =       IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 100;     { wait for modem stat change }
++{ SLIP (Serial Line IP) ioctl's }
++  SLIOCGUNIT =       IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 101;     { get slip unit number }
++  SLIOCSFLAGS =      IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 89;      { set configuration flags }
++  SLIOCGFLAGS =      IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 90;      { get configuration flags }
++  SLIOCSATTACH =     IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('t') shl 8) or 91;     { Attach slip i.f. to tty  }
++//  UIOCCMD(n) =       IOC_VOID or (ord('u') shl 8) or n;             { usr cntl op "n" }
++
++  OTTYDISC =         0;               { old, v7 std tty driver }
++  NETLDISC =         1;               { line discip for berk net }
++  NTTYDISC =         2;               { new tty discipline }
++  TABLDISC =         3;               { tablet discipline }
++  SLIPDISC =         4;               { serial IP discipline }
++
++  FIOCLEX =          IOC_VOID or (ord('f') shl 8) or 1;             { set close on exec    }
++  FIONCLEX =         IOC_VOID or (ord('f') shl 8) or 2;             { clear close on exec  }
++{ another local }
++
++  FIONREAD =         IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('f') shl 8) or 127;     { get # bytes to read }
++  FIONBIO =          IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('f') shl 8) or 126;     { set/clear non-blocking i/o }
++  FIOASYNC =         IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('f') shl 8) or 125;     { set/clear async i/o }
++
++  FIOSETOWN =        IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('f') shl 8) or 124;     { set owner }
++  FIOGETOWN =        IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('f') shl 8) or 123;     { get owner }
++  FIOASYNCQX =       IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('f') shl 8) or 122;     { set/clear async queueing }
++
++{ socket i/o controls }
++  SIOCSHIWAT =       IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('s') shl 8) or 0;              { set high watermark }
++  SIOCGHIWAT =       IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('s') shl 8) or 1;              { get high watermark }
++  SIOCSLOWAT =       IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('s') shl 8) or 2;              { set low watermark }
++  SIOCGLOWAT =       IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('s') shl 8) or 3;              { get low watermark }
++  SIOCATMARK =       IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('s') shl 8) or 7;              { at oob mark? }
++  SIOCSPGRP =        IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('s') shl 8) or 8;              { set process group }
++  SIOCGPGRP =        IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('s') shl 8) or 9;              { get process group }
++
++//  SIOCADDRT =        cint(IOC_IN or ((sizeof(struct ortentry) and IOCPARM_MASK) shl 16) or (ord('r') shl 8) or 10);     { add route }
++//  SIOCDELRT =        cint(IOC_IN or ((sizeof(struct ortentry) and IOCPARM_MASK) shl 16) or (ord('r') shl 8) or 11);     { delete route }
++
++//  SIOCSIFADDR =      cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 12);       { set ifnet address }
++//  OSIOCGIFADDR =     (int)_IOWR('i',13, struct oifreq);       { get ifnet address }
++//  SIOCGIFADDR =      (int)_IOWR('i',33, struct oifreq);       { get ifnet address }
++  SIOCGIFADDRS =     cint(IOC_VOID or (ord('i') shl 8) or 140);       { get ifnet addresses for an if}
++//  SIOCSIFDSTADDR =   cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 14);       { set p-p address }
++//  OSIOCGIFDSTADDR =  (int)_IOWR('i',15, struct oifreq);       { get p-p address }
++//  SIOCGIFDSTADDR =   (int)_IOWR('i',34, struct oifreq);       { get p-p address }
++//  SIOCSIFFLAGS =     cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 16);       { set ifnet flags }
++//  SIOCGIFFLAGS =     (int)_IOWR('i',17, struct oifreq);       { get ifnet flags }
++//  OSIOCGIFBRDADDR =  (int)_IOWR('i',18, struct oifreq);       { get broadcast addr }
++//  SIOCGIFBRDADDR =   (int)_IOWR('i',35, struct oifreq);       { get broadcast addr }
++//  SIOCSIFBRDADDR =   cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 19);        { set broadcast addr }
++//  OSIOCGIFCONF =     (int)_IOWR('i',20, struct ifconf);       { get ifnet list }
++//  CSIOCGIFCONF =     (int)_IOWR('i',36, struct ifconf);       { get ifnet list }
++//  SIOCGIFCONF =      (int)_IOWR('i',69, struct ifconf);       { get ifnet list }
++//  OSIOCGIFNETMASK =  (int)_IOWR('i',21, struct oifreq);       { get net addr mask }
++//  SIOCGIFNETMASK =   (int)_IOWR('i',37, struct oifreq);       { get net addr mask }
++//  SIOCSIFNETMASK =   cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 22);        { set net addr mask }
++//  SIOCGIFMETRIC =    (int)_IOWR('i',23, struct oifreq);       { get IF metric }
++//  SIOCSIFMETRIC =    cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 24);        { set IF metric }
++//  SIOCDIFADDR =      cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 25);        { delete IF addr }
++//  SIOCAIFADDR =      cint(IOC_IN or ((sizeof(struct ifaliasreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 26);    { add/chg IF alias }
++//  SIOCSIFSUBCHAN =   cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 27);        { set subchannel adr.}
++//  SIOCSIFNETDUMP =   cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 28);        { set netdump fastwrt}
++
++//  SIOUPDROUTE =      cint(IOC_IN or ((sizeof(struct ifaliasreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 29);    { Update Routing table }
++//  SIOCSARP =         cint(IOC_IN or ((sizeof(struct arpreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 30);       { set arp entry }
++//  OSIOCGARP =        (int)_IOWR('i',31, struct arpreq);       { get arp entry }
++//  SIOCGARP =         (int)_IOWR('i',38, struct arpreq);       { get arp entry }
++//  SIOCDARP =         cint(IOC_IN or ((sizeof(struct arpreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 32);       { delete arp entry }
++
++//  SIOCSIFOPTIONS =   cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 41);       { set ifnet options }
++//  SIOCGIFOPTIONS =   (int)_IOWR('i',42, struct oifreq);       { get ifnet options }
++//  SIOCADDMULTI =     cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 49);        { add multicast addr }
++//  SIOCDELMULTI =     cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 50);        { del multicast addr }
++//  SIOCGETVIFCNT =    (int)_IOWR('u', 51, struct sioc_vif_req){ vif pkt cnt }
++//  SIOCGETSGCNT =     (int)_IOWR('u', 52, struct sioc_sg_req); { s,g pkt cnt }
++
++//  SIOCADDNETID =     cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 87);        { set netids }
++//  SIOCSIFMTU =       cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 88);        { set mtu }
++//  SIOCGIFMTU =       (int)_IOWR('i',86, struct oifreq);       { get mtu }
++
++//  SIOCSNETOPT =      cint(IOC_IN or ((sizeof(struct optreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 90); { set network option }
++//  SIOCGNETOPT =      (int)_IOWR('i', 91, struct optreq); { get network option }
++//  SIOCDNETOPT =      (int)_IOWR('i', 128, struct optreq); { set default }
++//  SIOCGNETOPT1 =     (int)_IOWR('i', 129, struct optreq1); { get network option }
++//  SIOCGLOADF =       (int)_IOWR('i', 130, int); { get flag: if loadtime passed }
++//  SIOCSLOADF =       (int)_IOWR('i', 131, int); { set flag: if loadtime passed }
++//  SIOCGTUNEPHASE =   (int)_IOWR('i', 138, int); { get tuning_phase }
++
++//  SIOCSX25XLATE =    cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 99);       { set xlate tab }
++//  SIOCGX25XLATE =    (int)_IOWR('i',100, struct oifreq);      { get xlate tab }
++//  SIOCDX25XLATE =    cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 101);      { delete xlate tab }
++
++//  SIOCIFDETACH =     cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 102);       { detach an ifnet }
++//  SIOCIFATTACH =     cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 103);       { attach an ifnet }
++
++  SIOCGNMTUS =       cint(IOC_VOID or (ord('i') shl 8) or 110); { get NMTUs }
++  SIOCGETMTUS =      cint(IOC_VOID or (ord('i') shl 8) or 111); { get common_mtus }
++  SIOCADDMTU =       cint(IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 112); { add mtu  }
++  SIOCDELMTU =       cint(IOC_IN or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 113); { delete mtu }
++
++  SIOCGIFGIDLIST =   cint(IOC_VOID or (ord('i') shl 8) or 104);                   { get gidlist }
++  SIOCSIFGIDLIST =   cint(IOC_VOID or (ord('i') shl 8) or 105);                   { set gidlist }
++
++  SIOCGSIZIFCONF =   cint(IOC_OUT or ((sizeof(cint) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 106); { get size for SIOCGIFCONF }
++
++//  SIOCIF_ATM_UBR =           cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 120);  { set ubr rate }
++//  SIOCIF_ATM_SNMPARP =       cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 121);  { atm snmp arp }
++//  SIOCIF_ATM_IDLE =          cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 122);  { set idle time }
++//  SIOCIF_ATM_DUMPARP =       cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 123);  { atm dump arp }
++//  SIOCIF_ATM_SVC =           cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 124);  { atmif init }
++//  SIOCIF_ATM_DARP =          cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 125);  { del atmarp }
++//  SIOCIF_ATM_GARP =          cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 126);  { get atmarp }
++//  SIOCIF_ATM_SARP =          cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 127);  { set atmarp };
++
++{ For IP over Infiniband }
++
++//  SIOCIF_IB_DUMP_ARP =       cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 128); { ib dump arp }
++//  SIOCIF_IB_DEL_ARP =        cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 129); { if_ib del  ibarp }
++//  SIOCIF_IB_GET_ARP =        cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 130); { get ibarp }
++//  SIOCIF_IB_SET_ARP =        cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 131); { set ibarp }
++//  SIOCIF_IB_SET_PKEY =       cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 132); { set ib port  pkey value }
++//  SIOCIFGETPKEY =            cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 101); { set ubr rate }
++//  SIOCIF_IB_SET_PORT =       cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 133); { set ubr rate }
++//  SIOCIF_IB_SET_QSIZE =      cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 134); { set ib qsize  }
++//  SIOCIF_IB_RESIZE_CQ =      cint(IOC_IN or ((sizeof(struct ifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 135); { set resize IB CQ  }
++
++
++
++
++//  SIOCGISNO =        (int)_IOWR('i',107, struct oifreq);      { get IF network options }
++//  SIOCSISNO =        cint(IOC_IN or ((sizeof(struct oifreq) and IOCPARM_MASK) shl 16) or (ord('i') shl 8) or 108);      { set IF network options }
++//  SIOCGIFBAUDRATE =  (int)_IOWR('i', 109, struct oifreq);     { get ifnet's if_baudrate }
++
++  SIOCADDIFVIPA =    cint(IOC_VOID or (ord('i') shl 8) or 66);       { specify interfaces that should use this vipa }
++  SIOCDELIFVIPA =    cint(IOC_VOID or (ord('i') shl 8) or 67);       { unconfigure interfaces using this vipa       }
++  SIOCLISTIFVIPA =   cint(IOC_VOID or (ord('i') shl 8) or 68);       { list interfaces using this vipa              }
++
++  TIOC = ord('T') shl 8;
++  TCGETS = TIOC or 1;
++  TCSETS = TIOC or 2;
++  TCSETSW = TIOC or 3;
++  TCSETSF = TIOC or 4;
++  TCGETA = TIOC or 5;
++  TCSETA = TIOC or 6;
++  TCSETAW = TIOC or 7;
++  TCSETAF = TIOC or 8;
++{ SVID interface  }
++  TCSBRK = TIOC or 9;
++{ 0->.25 seconds else <arg>ms  }
++  TCSBREAK = TIOC or 10;
++  TCXONC = TIOC or 11;
++  TCFLSH = TIOC or 12;
++  TCGLEN = TIOC or 13;
++  TCSLEN = TIOC or 14;
++  TCSAK = TIOC or 15;
++  TCQSAK = TIOC or 16;
++  TCTRUST = TIOC or 17;
++  TCQTRUST = TIOC or 18;
++  TCSMAP = TIOC or 19;
++  TCGMAP = TIOC or 20;
++  TCKEP = TIOC or 21;
++  TCGSAK = TIOC or 22;
++  TCLOOP = TIOC or 23;
++  TCVPD = TIOC or 24;
++  TCREG = TIOC or 25;
++  TCGSTATUS = TIOC or 26;
++  TCSCONTROL = TIOC or 27;
++  TCSCSMAP = TIOC or 28;
++  TCGCSMAP = TIOC or 29;
++  TCMGR = TCSAK;
++  TCQMGR = TCQSAK;
++  TIONREAD = FIONREAD;
++{ used with TCSAK and TCQSAK  }
++  TCSAKOFF = 0;
++  TCSAKON = 1;
++{ used with TCTRUST and TCQTRUCT  }
++  TCUNTRUSTED = 0;
++  TCTRUSTED = 1;
++
++
++type
++  Ptcflag_t = ^tcflag_t;
++  tcflag_t = dword;
++
++  Pcc_t = ^cc_t;
++  cc_t = byte;
++
++const
++  NCCS = 16;
++type
++  Pspeed_t = ^speed_t;
++  speed_t = dword;
++{
++ * Ioctl control packet
++  }
++{ input modes  }
++{ output modes  }
++{ control modes  }
++{ line discipline modes  }
++{ control chars  }
++  Ptermios = ^termios;
++  termios = record
++      c_iflag : tcflag_t;
++      c_oflag : tcflag_t;
++      c_cflag : tcflag_t;
++      c_lflag : tcflag_t;
++      c_cc : array[0..(NCCS)-1] of cc_t;
++    end;
++
++{ use POSIX required prototypes  }
++function tcgetattr(_para1:longint; var _para2:termios):longint;cdecl;external;
++function tcgetsid(_para1:longint):pid_t;cdecl;external;
++(* Const before type ignored *)
++
++function tcsetattr(_para1:longint; _para2:longint; constref _para3:termios):longint;cdecl;external;
++//function tcsendbreak(_para1:longint; _para2:longint):longint;cdecl;external;
++//function tcdrain(_para1:longint):longint;cdecl;external;
++//function tcflush(_para1:longint; _para2:longint):longint;cdecl;external;
++///function tcflow(_para1:longint; _para2:longint):longint;cdecl;external;
++(* Const before type ignored *)
++function cfgetospeed(var _para1:termios):speed_t;cdecl;external;
++(* Const before type ignored *)
++function cfgetispeed(var _para1:termios):speed_t;cdecl;external;
++function cfsetospeed(constref _para1:termios; _para2:speed_t):longint;cdecl;external;
++function cfsetispeed(var _para1:termios; _para2:speed_t):longint;cdecl;external;
++
++{ mask name symbols for c_lflag  }
++{ values for optional_actions arguments to tcsetattr()  }
++
++const
++  TCSANOW = 0;
++  TCSADRAIN = 1;
++  TCSAFLUSH = 2;
++{ values for the queue_selector argument to tcflush()  }
++  TCIFLUSH = 0;
++  TCOFLUSH = 1;
++  TCIOFLUSH = 2;
++{ values for the action argument to tcflow()  }
++  TCOOFF = 0;
++  TCOON = 1;
++  TCIOFF = 2;
++  TCION = 3;
++{ control characters  }
++  VINTR = 0;
++  VQUIT = 1;
++  VERASE = 2;
++  VKILL = 3;
++  VEOF = 4;
++  VEOL = 5;
++  VSTART = 7;
++  VSTOP = 8;
++  VSUSP = 9;
++  VMIN = 4;
++  VTIME = 5;
++  VEOL2 = 6;
++  VDSUSP = 10;
++  VREPRINT = 11;
++  VDISCRD = 12;
++  VWERSE = 13;
++  VLNEXT = 14;
++{ 5.4 compatibility  }
++  VSTRT = VSTART;
++
++const
++  B0 = $00000000;
++  B50 = $00000001;
++  B75 = $00000002;
++  B110 = $00000003;
++  B134 = $00000004;
++  B150 = $00000005;
++  B200 = $00000006;
++  B300 = $00000007;
++  B600 = $00000008;
++  B1200 = $00000009;
++  B1800 = $0000000a;
++  B2400 = $0000000b;
++  B4800 = $0000000c;
++  B9600 = $0000000d;
++  B19200 = $0000000e;
++  B38400 = $0000000f;
++  EXTA = B19200;
++  EXTB = B38400;
++{ _ALL_SOURCE  }
++{ c_iflag bits  }
++
++const
++  IGNBRK = $00000001;
++  BRKINT = $00000002;
++  IGNPAR = $00000004;
++  PARMRK = $00000008;
++  INPCK = $00000010;
++  ISTRIP = $00000020;
++  INLCR = $00000040;
++  IGNCR = $00000080;
++  ICRNL = $00000100;
++  IXON = $00000200;
++  IXOFF = $00000400;
++const
++  IUCLC = $00000800;
++
++const
++  IXANY = $00001000;
++  IMAXBEL = $00010000;
++{ c_oflag bits  }
++
++const
++  OPOST = $00000001;
++const
++  OLCUC = $00000002;
++
++const
++  ONLCR = $00000004;
++  OCRNL = $00000008;
++  ONOCR = $00000010;
++  ONLRET = $00000020;
++  OFILL = $00000040;
++  OFDEL = $00000080;
++  CRDLY = $00000300;
++//  CR0 = $00000000;
++//  CR1 = $00000100;
++//  CR2 = $00000200;
++//  CR3 = $00000300;
++  TABDLY = $00000c00;
++//  TAB0 = $00000000;
++//  TAB1 = $00000400;
++//  TAB2 = $00000800;
++//  TAB3 = $00000c00;
++  BSDLY = $00001000;
++//  BS0 = $00000000;
++//  BS1 = $00001000;
++  FFDLY = $00002000;
++//  FF0 = $00000000;
++//  FF1 = $00002000;
++  NLDLY = $00004000;
++//  NL0 = $00000000;
++//  NL1 = $00004000;
++  VTDLY = $00008000;
++  VT0 = $00000000;
++  VT1 = $00008000;
++  DLY_MASK = ((((NLDLY or CRDLY) or TABDLY) or BSDLY) or VTDLY) or FFDLY;
++{ expand tabs to spaces added     	 }
++  OXTABS = $00040000;
++{ on 08/05/92.                          }
++{ discard EOT's (^D) on output    	 }
++  ONOEOT = $00080000;
++{ added on 08/05/92.                    }
++{ c_cflag bits  }
++
++const
++  _CBAUD = $0000000f;
++  CBAUD = _CBAUD;
++  CSIZE = $00000030;
++  CS5 = $00000000;
++  CS6 = $00000010;
++  CS7 = $00000020;
++  CS8 = $00000030;
++  CSTOPB = $00000040;
++  CREAD = $00000080;
++  PARENB = $00000100;
++  PARODD = $00000200;
++  HUPCL = $00000400;
++  CLOCAL = $00000800;
++  _CIBAUD = $000f0000;
++  _IBSHIFT = 16;
++  CIBAUD = _CIBAUD;
++  IBSHIFT = _IBSHIFT;
++  PAREXT = $00100000;
++{ c_lflag bits  }
++
++const
++  ISIG = $00000001;
++  ICANON = $00000002;
++
++const
++  XCASE = $00000004;
++
++const
++//  ECHO = $00000008;
++  ECHOE = $00000010;
++  ECHOK = $00000020;
++  ECHONL = $00000040;
++  NOFLSH = $00000080;
++//  TOSTOP = $00010000;
++  ECHOCTL = $00020000;
++  ECHOPRT = $00040000;
++  ECHOKE = $00080000;
++//  FLUSHO = $00100000;
++{ use alternate WERASE    	 }
++  ALTWERASE = $00400000;
++{ algorithm, added ALTWERASE    }
++{ on 08/05/92.                  }
++//  PENDIN = $20000000;
++{ ALL_SOURCE  }
++
++const
++  IEXTEN = $00200000;
++
+diff --git a/rtl/zos/termiosproc.inc b/rtl/zos/termiosproc.inc
+new file mode 100644
+index 00000000..2e954a58
+--- /dev/null
++++ b/rtl/zos/termiosproc.inc
+@@ -0,0 +1,100 @@
++{
++   This file is part of the Free Pascal run time library.
++   (c) 2000-2003 by Marco van de Voort
++   member of the Free Pascal development team.
++
++   See the file COPYING.FPC, included in this distribution,
++   for details about the copyright.
++
++   Termios implementation for FreeBSD
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY;without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++}
++
++
++{******************************************************************************
++                         IOCtl and Termios calls
++******************************************************************************}
++
++Procedure CFMakeRaw(var tios:TermIOS);
++begin
++  with tios do
++   begin
++     c_iflag:=c_iflag and (not (IMAXBEL or IXOFF or INPCK or BRKINT or
++                PARMRK or ISTRIP or INLCR or IGNCR or ICRNL or IXON or
++                IGNPAR));
++     c_iflag:=c_iflag OR IGNBRK;
++     c_oflag:=c_oflag and (not OPOST);
++     c_lflag:=c_lflag and (not (ECHO or ECHOE or ECHOK or ECHONL or ICANON or
++                                ISIG or IEXTEN or NOFLSH or TOSTOP or PENDIN));
++     c_cflag:=(c_cflag and (not (CSIZE or PARENB))) or (CS8 OR cread);
++     c_cc[VMIN]:=1;
++     c_cc[VTIME]:=0;
++   end;
++end;
++
++
++Function real_tcsendbreak(fd,duration:cint):cint;cdecl;external name 'tcsendbreak';
++
++Function TCSendBreak(fd,duration:cint):cint; {$ifdef VER2_0}inline;{$endif}
++begin
++  TCSendBreak:=real_tcsendbreak(fd,duration);
++end;
++
++
++
++Function TCSetPGrp(fd,id:cint):cint; {$ifdef VER2_0}inline;{$endif}
++begin
++  TCSetPGrp:=fpIOCtl(fd,TIOCSPGRP,pointer(id));
++end;
++
++
++Function TCGetPGrp(fd:cint;var id:cint):cint; {$ifdef VER2_0}inline;{$endif}
++begin
++  TCGetPGrp:=fpIOCtl(fd,TIOCGPGRP,@id);
++end;
++
++Function real_tcdrain(fd:cint):cint;cdecl;external name 'tcdrain';
++
++Function  TCDrain(fd:cint)     :cint;inline;
++begin
++  TCDrain:=real_tcdrain(fd);
++end;
++
++
++Function real_tcflow(fd,act:cint):cint;cdecl;external name 'tcflow';
++
++Function  TCFlow(fd,act:cint) :cint;inline;
++begin
++  TCFlow:=real_tcflow(fd,act);
++end;
++
++
++Function real_tcflush(fd,qsel:cint):cint;cdecl;external name 'tcflush';
++
++Function  TCFlush(fd,qsel:cint):cint; inline;
++begin
++  TCFlush:=real_tcflush(fd,qsel);
++end;
++
++Function IsATTY (Handle:cint):cint;
++{
++  Check if the filehandle described by 'handle' is a TTY (Terminal)
++}
++var
++  t : Termios;
++begin
++ IsAtty:=ord(TCGetAttr(Handle,t) <> -1);
++end;
++
++
++Function IsATTY(var f: text):cint; {$ifdef VER2_0}inline;{$endif}
++{
++  Idem as previous, only now for text variables.
++}
++begin
++  IsATTY:=IsaTTY(textrec(f).handle);
++end;
++
+diff --git a/rtl/zos/unxconst.inc b/rtl/zos/unxconst.inc
+new file mode 100644
+index 00000000..70f0c6cc
+--- /dev/null
++++ b/rtl/zos/unxconst.inc
+@@ -0,0 +1,85 @@
++{
++    This file is part of the Free Pascal run time library.
++    Copyright (c) 1999-2000 by Michael Van Canneyt,
++    member of the Free Pascal development team.
++
++    Constants for Unix unit.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++
++const
++
++  { Things for LSEEK call}
++  Seek_set = 0;
++  Seek_Cur = 1;
++  Seek_End = 2;
++
++  { Things for OPEN call - after include/sys/fcntl.h,
++   BSD specifies these constants in hex }
++  Open_Accmode  = 3;
++  Open_RdOnly   = 0;
++  Open_WrOnly   = 1;
++  Open_RdWr     = 2;
++  Open_NonBlock = 4;
++  Open_Append   = 8;
++//  Open_ShLock   = $10;
++//  Open_ExLock   = $20;
++//  Open_ASync    = $40;
++//  Open_FSync    = $80;
++//  Open_NoFollow = $100;
++  Open_Create   = $100;       {BSD convention}
++  Open_Creat    = $100;       {Linux convention}
++  Open_Trunc    = $200;
++  Open_Excl     = $400;
++  Open_NoCTTY   = $800;
++
++  { The waitpid uses the following options:}
++  Wait_NoHang   = 1;
++  Wait_UnTraced = 2;
++  Wait_Any      = -1;
++  Wait_MyPGRP   = 0;
++
++
++  { Constants to check stat.mode -  checked all STAT constants with BSD}
++  STAT_IFMT   = $f000; {00170000 }
++  STAT_IFSOCK = $c000; {0140000 }
++  STAT_IFLNK  = $a000; {0120000 }
++  STAT_IFREG  = $8000; {0100000 }
++  STAT_IFBLK  = $6000; {0060000 }
++  STAT_IFDIR  = $4000; {0040000 }
++  STAT_IFCHR  = $2000; {0020000 }
++  STAT_IFIFO  = $1000; {0010000 }
++  STAT_ISUID  = $0800; {0004000 }
++  STAT_ISGID  = $0400; {0002000 }
++  STAT_ISVTX  = $0200; {0001000}
++  { Constants to check permissions all }
++  STAT_IRWXO = $7;
++  STAT_IROTH = $4;
++  STAT_IWOTH = $2;
++  STAT_IXOTH = $1;
++
++  STAT_IRWXG = STAT_IRWXO shl 3;
++  STAT_IRGRP = STAT_IROTH shl 3;
++  STAT_IWGRP = STAT_IWOTH shl 3;
++  STAT_IXGRP = STAT_IXOTH shl 3;
++
++  STAT_IRWXU = STAT_IRWXO shl 6;
++  STAT_IRUSR = STAT_IROTH shl 6;
++  STAT_IWUSR = STAT_IWOTH shl 6;
++  STAT_IXUSR = STAT_IXOTH shl 6;
++
++  {Constants Termios/Ioctl (used in Do_IsDevice) }
++  IOCtl_TCGETS= (ord('T') shl 8) or 1; // TCGETS is also in termios.inc, but the sysunix needs only this
++
++  ITimer_Real    =0;
++  ITimer_Virtual =1;
++  ITimer_Prof    =2;
++
+diff --git a/rtl/zos/unxfunc.inc b/rtl/zos/unxfunc.inc
+new file mode 100644
+index 00000000..89a4a417
+--- /dev/null
++++ b/rtl/zos/unxfunc.inc
+@@ -0,0 +1,142 @@
++{
++   This file is part of the Free Pascal run time library.
++   Copyright (c) 2000 by Marco van de Voort
++     member of the Free Pascal development team.
++
++   See the file COPYING.FPC, included in this distribution,
++   for details about the copyright.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY;without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++**********************************************************************}
++
++Function PClose(Var F:file) : cint;
++var
++  pl : ^cint;
++  res: cint;
++begin
++  repeat
++    res:=fpclose(filerec(F).Handle);
++  until (res<>-1) or (fpgeterrno<>ESysEINTR);
++{ closed our side, Now wait for the other - this appears to be needed ?? }
++  pl:=@(filerec(f).userdata[2]);
++  pclose := WaitProcess(pl^);
++end;
++
++Function PClose(Var F:text) :cint;
++var
++  pl  : ^cint;
++  res : cint;
++begin
++  repeat
++    res:=fpclose(Textrec(F).Handle);
++  until (res<>-1) or (fpgeterrno<>ESysEINTR);
++{ closed our side, Now wait for the other - this appears to be needed ?? }
++  pl:=@(textrec(f).userdata[2]);
++  pclose:= WaitProcess(pl^);
++end;
++
++
++// can't have oldfpccall here, linux doesn't need it.
++Function AssignPipe(var pipe_in,pipe_out:cint):cint; [public, alias : 'FPC_SYSC_ASSIGNPIPE'];
++{
++  Sets up a pair of file variables, which act as a pipe. The first one can
++  be read from, the second one can be written to.
++  If the operation was unsuccessful, linuxerror is set.
++}
++var
++  ret  : longint;
++  fdis : array[0..1] of cint;
++begin
++ fdis[0]:=pipe_in;
++ fdis[1]:=pipe_out;
++ ret:=pipe(fdis);
++ pipe_in:=fdis[0];
++ pipe_out:=fdis[1];
++ AssignPipe:=ret;
++end;
++
++{$define FPC_HAS_GETTIMEZONEFILE}
++
++function GetTimezoneFile:shortstring;
++var
++  tzenv : PAnsiChar;
++  l: longint;
++  s: shortstring;
++  ft : text;
++begin
++  GetTimeZoneFile:='';
++  { the TZ variable holds the name of the timezone (possibly followed by a
++    comma and rules), and the timezone files themselves are stored in
++    /usr/share/lib/zoneinfo }
++  tzenv:=fpgetenv('TZ');
++  if assigned(tzenv) then
++    begin
++      s:=strpas(tzenv);
++      l:=pos(',',s);
++      if l<>0 then
++        s:=copy(s,1,l-1);
++      GetTimeZoneFile:='/usr/share/lib/zoneinfo/'+s;
++    end
++  else
++    exit;
++  assign(ft,GetTimeZoneFile);
++{$push}
++{$I-}
++  reset(ft);
++  if IOResult=0 then
++    close(ft)
++  else
++    GetTimeZoneFile:='';
++{$pop}
++end;
++
++
++{ should probably be defined in ostypes.inc for all OSes }
++const
++  F_RDLCK =        01;      (* Read lock *)
++  F_WRLCK =        02;      (* Write lock *)
++  F_UNLCK =        03;      (* Remove lock(s) *)
++
++
++Function fpFlock (fd,mode : longint) : cint;
++  var
++    fl : flock;
++    cmd : cint;
++  begin
++    { initialize the flock struct to set lock on entire file }
++    fillchar(fl,sizeof(fl),0);
++
++    { In non-blocking lock, use F_SETLK for cmd, F_SETLKW otherwise }
++    if (mode and LOCK_NB)<>0 then
++      begin
++        cmd:=F_SETLK;
++        { turn off this bit }
++        mode:=mode and not(LOCK_NB);
++      end
++    else
++      cmd:=F_SETLKW;
++
++    case mode of
++      LOCK_UN:
++        fl.l_type:=fl.l_type or F_UNLCK;
++      LOCK_SH:
++        fl.l_type:=fl.l_type or F_RDLCK;
++      LOCK_EX:
++        fl.l_type:=fl.l_type or F_WRLCK;
++      else
++        begin
++          errno:=ESysEINVAL;
++          fpFlock:=-1;
++	  exit;
++        end;
++    end;
++
++    fpFlock:=fpFcntl(fd,cmd,fl);
++
++    if (fpFlock=-1) and (errno=ESysEACCES) then
++       errno:=ESysEWOULDBLOCK;
++  end;
++
+-- 
+2.43.0
+

@@ -1,0 +1,51 @@
+From d57c6109fbe1fa264332f40606a4f25124be506c Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 13:23:06 +0200
+Subject: [PATCH 2/6] [SystemZ][z/OS] Do not cache section definitions
+
+If a section was seen before, MCContext::getGOFFSection() returned that
+section for reuse. ED symbols such as C_WSA64 need to be recreated
+instead. The DWARF EH tables all have the same SD, so their C_WSA64
+section was shared, resulting in an "invalid data" binder error
+(IEW2353E ... ERROR CODE IS 25000E).
+
+Adapted from llvm/llvm-project#225157 (Kai Nacke) without changing the
+layout of MCContext, so that it can be applied to a release build.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ llvm/lib/MC/MCContext.cpp | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/llvm/lib/MC/MCContext.cpp b/llvm/lib/MC/MCContext.cpp
+index cea521deb..297493ecc 100644
+--- a/llvm/lib/MC/MCContext.cpp
++++ b/llvm/lib/MC/MCContext.cpp
+@@ -725,16 +725,16 @@ template <typename TAttr>
+ MCSectionGOFF *MCContext::getGOFFSection(SectionKind Kind, StringRef Name,
+                                          TAttr Attributes, MCSection *Parent,
+                                          bool IsVirtual) {
++  // Do not reuse section definitions: ED symbols such as C_WSA64 must be
++  // created anew for every SD, including the DWARF EH tables, which all have
++  // the same SD (otherwise the binder reports "invalid data"). The map only
++  // keeps the names alive; the key is made unique with a counter.
++  // (Adapted from llvm/llvm-project#225157 without changing MCContext.h.)
+   std::string UniqueName(Name);
+-  if (Parent) {
+-    UniqueName.append("/").append(Parent->getName());
+-    if (auto *P = static_cast<MCSectionGOFF *>(Parent)->getParent())
+-      UniqueName.append("/").append(P->getName());
+-  }
+-  // Do the lookup. If we don't have a hit, return a new section.
++  UniqueName.append("\x01").append(std::to_string(GOFFUniquingMap.size()));
+   auto [Iter, Inserted] = GOFFUniquingMap.try_emplace(UniqueName);
+-  if (!Inserted)
+-    return Iter->second;
++  assert(Inserted && "GOFF section key not unique");
++  (void)Inserted;
+ 
+   StringRef CachedName = StringRef(Iter->first.c_str(), Name.size());
+   MCSectionGOFF *GOFFSection = new (GOFFAllocator.Allocate())
+-- 
+2.43.0
+

@@ -1,0 +1,9 @@
+#!/bin/sh
+# zos-sh: führt einen Befehl in der z/OS-UNIX-Shell aus (im Verzeichnis ZOS_DIR).
+#   zos-sh 'befehl ...'
+# Läuft in WSL (ssh.exe von Git für Windows); Zugangsdaten aus .zos.env.
+SELF=$(readlink -f "$0")
+ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
+WH=$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
+HOME=$WH . "$ENVFILE"
+exec ${ZOS_SSH:-ssh.exe} -i "$ZOS_KEY" -o BatchMode=yes "$ZOS_HOST" "cd $ZOS_DIR && $*"

@@ -1,0 +1,246 @@
+From a071affb5ea72cc7368774e8cfad32e9fb8f6834 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 14:18:20 +0200
+Subject: [PATCH 05/10] compiler: z/OS exceptions, resource strings and
+ parameter passing fixes
+
+- s390x: the landing pad receives the exception object in R1 and the
+  selector in R2 (XPLINK-64), eh_return_data_regno returns 1 and 2
+- llvm/z/OS: landing pads of try..except blocks with typed catch clauses
+  get a catch-all clause at the end. The landing pad code re-raises the
+  exception if no handler matches, but the phase 1 search of the unwinder
+  skips a landing pad whose clauses do not match, so an enclosing handler
+  in the same function was never found
+- z/OS: the binder does not keep the data parts of the resource string
+  table of a unit in order, so the table cannot be walked from START to
+  END. Generate a list with the number of entries and pointers to the
+  entries per unit (RESSTR_$unit_$$_PTRLIST), which FPC_RESOURCESTRINGTABLES
+  points to (used by the RTL with FPC_RESSTR_PTRLIST)
+- s390x parameters: records and sets of 1, 2 or 4 bytes are passed as
+  integers of the same size (caller and callee disagreed about the position
+  of the data in the 64 bit slot on big endian); Pascal records of other
+  sizes that do not fill 64 bit slots are passed by reference; passing
+  "complex-like" records in floating point registers is disabled for now
+  (not supported by the generic code)
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/cresstr.pas       | 42 +++++++++++++++++++++++++++++++++++++-
+ compiler/llvm/agllvm.pas   | 35 +++++++++++++++++++++++++++++++
+ compiler/ngenutil.pas      | 15 +++++++++++++-
+ compiler/s390x/cpubase.pas |  4 +++-
+ compiler/s390x/cpupara.pas | 21 ++++++++++++++++---
+ 5 files changed, 111 insertions(+), 6 deletions(-)
+
+diff --git a/compiler/cresstr.pas b/compiler/cresstr.pas
+index fa6dec48..95ee645d 100644
+--- a/compiler/cresstr.pas
++++ b/compiler/cresstr.pas
+@@ -34,7 +34,7 @@ implementation
+    SysUtils,
+    cclasses,widestr,
+    cutils,globtype,globals,systems,
+-   symbase,symconst,symtype,defutil, symdef,symsym,symtable,
++   symbase,symconst,symtype,defutil, symdef,symsym,symtable,aasmbase,
+    verbose,fmodule,ppu,
+    aasmtai,aasmdata,aasmcnst,
+    aasmcpu;
+@@ -176,6 +176,7 @@       Tresourcestrings=class
+         charlen : longint;
+         st : tstringtype;
+         strcharpointertype: tdef;
++        count: longint;
+ 
+       begin
+         resstrdef:=search_system_type('TRESOURCESTRINGRECORD').typedef;
+@@ -258,6 +259,45 @@       Tresourcestrings=class
+         );
+         tcb.free;
+         tcb := nil;
++
++        { z/OS: the binder does not keep the data parts of the table in order,
++          so the table cannot be walked from START to END. Add a list with
++          the number of entries and pointers to the start record and to all
++          entries, which the RTL uses instead (FPC_RESSTR_PTRLIST). }
++        if target_info.system=system_s390x_zos then
++          begin
++            tcb:=ctai_typedconstbuilder.create([tcalo_is_public_asm,tcalo_new_section]);
++            tcb.begin_anonymous_record('',default_settings.packrecords,sizeof(pint),
++              targetinfos[target_info.system]^.alignment.recordalignmin);
++            count:=0;
++            R:=TResourceStringItem(List.First);
++            while assigned(R) do
++              begin
++                inc(count);
++                R:=TResourceStringItem(R.Next);
++              end;
++            tcb.emit_ord_const(count,sizesinttype);
++            tcb.emit_tai(Tai_const.Create_sym(
++              ctai_typedconstbuilder.get_vectorized_dead_strip_section_symbol_start('RESSTR',current_module.localsymtable,[])),
++              voidpointertype);
++            R:=TResourceStringItem(List.First);
++            while assigned(R) do
++              begin
++                tcb.emit_tai(Tai_const.Create_sym(
++                  current_asmdata.RefAsmSymbol(make_mangledname('RESSTR',R.Sym.Owner,R.Sym.Name),AT_DATA)),
++                  voidpointertype);
++                R:=TResourceStringItem(R.Next);
++              end;
++            resstrdef:=tcb.end_anonymous_record;
++            current_asmdata.AsmLists[al_resourcestrings].concatList(
++              tcb.get_final_asmlist(
++                current_asmdata.DefineAsmSymbol(make_mangledname('RESSTR',current_module.localsymtable,'PTRLIST'),AB_GLOBAL,AT_DATA,resstrdef),
++                resstrdef,sec_data,make_mangledname('RESSTR',current_module.localsymtable,'PTRLIST'),sizeof(pint)
++              )
++            );
++            tcb.free;
++            tcb := nil;
++          end;
+       end;
+ 
+     procedure Tresourcestrings.WriteRSJFile;
+diff --git a/compiler/llvm/agllvm.pas b/compiler/llvm/agllvm.pas
+index 033cb1d7..3cd0e37c 100644
+--- a/compiler/llvm/agllvm.pas
++++ b/compiler/llvm/agllvm.pas
+@@ -561,6 +561,38 @@        tdoubleval = record
+      end;
+ 
+ 
++  { z/OS: the landing pad of a try..except block only has catch clauses for
++    its own exception classes; if none matches, the code in the landing pad
++    re-raises the exception. The phase 1 search of the unwinder however
++    skips a landing pad whose clauses do not match, so an enclosing handler
++    in the same function would never be found. Add a catch-all clause at
++    the end, so that the landing pad is always entered and can re-raise. }
++  procedure add_catch_all_to_typed_landingpad(lp: taillvm);
++    var
++      clause: taillvm;
++      typed, catchall: boolean;
++    begin
++      typed:=false;
++      catchall:=false;
++      if lp.ops<3 then
++        exit;
++      clause:=taillvm(lp.oper[2]^.ai);
++      while assigned(clause) do
++        begin
++          { cleanup clauses have no operands and are always the last one }
++          if clause.llvmopcode<>la_catch then
++            exit;
++          if assigned(clause.oper[1]^.ref^.symbol) then
++            typed:=true
++          else
++            catchall:=true;
++          clause:=taillvm(clause.oper[2]^.ai);
++        end;
++      if typed and not catchall then
++        lp.landingpad_add_clause(la_catch,voidpointertype,nil);
++    end;
++
++
+   procedure TLLVMInstrWriter.WriteInstruction(hp: tai);
+     var
+       op: tllvmop;
+@@ -572,6 +604,9 @@        tdoubleval = record
+       done: boolean;
+     begin
+       op:=taillvm(hp).llvmopcode;
++      if (op=la_landingpad) and
++         (target_info.system=system_s390x_zos) then
++        add_catch_all_to_typed_landingpad(taillvm(hp));
+       { we write everything immediately rather than adding it into a string,
+         because operands may contain other tai that will also write things out
+         (and their output must come after everything that was processed in this
+diff --git a/compiler/ngenutil.pas b/compiler/ngenutil.pas
+index fc382ee2..56c17775 100644
+--- a/compiler/ngenutil.pas
++++ b/compiler/ngenutil.pas
+@@ -1564,7 +1564,20 @@ implementation
+       countplaceholder:=tcb.emit_placeholder(sizesinttype);
+       while assigned(hp) do
+         begin
+-          if mf_has_resourcestrings in hp.moduleflags then
++          if (mf_has_resourcestrings in hp.moduleflags) and
++             (target_info.system=system_s390x_zos) then
++            begin
++              { see Tresourcestrings.CreateResourceStringData: start and
++                end both point to the pointer list of the unit }
++              tcb.emit_tai(Tai_const.Create_sym(
++                current_asmdata.RefAsmSymbol(make_mangledname('RESSTR',hp.localsymtable,'PTRLIST'),AT_DATA)),
++                voidpointertype);
++              tcb.emit_tai(Tai_const.Create_sym(
++                current_asmdata.RefAsmSymbol(make_mangledname('RESSTR',hp.localsymtable,'PTRLIST'),AT_DATA)),
++                voidpointertype);
++              inc(count);
++            end
++          else if mf_has_resourcestrings in hp.moduleflags then
+             begin
+               tcb.emit_tai(Tai_const.Create_sym(
+                 ctai_typedconstbuilder.get_vectorized_dead_strip_section_symbol_start('RESSTR',hp.localsymtable,[tcdssso_register_asmsym,tcdssso_use_indirect])),
+diff --git a/compiler/s390x/cpubase.pas b/compiler/s390x/cpubase.pas
+index 857c6a71..585a6ae7 100644
+--- a/compiler/s390x/cpubase.pas
++++ b/compiler/s390x/cpubase.pas
+@@ -333,8 +333,10 @@ implementation
+ 
+     function eh_return_data_regno(nr: longint): longint;
+       begin
++        { XPLINK-64: the landing pad receives the exception object in R1
++          and the selector in R2 (the unwinder uses GPR numbers) }
+         if (nr>=0) and (nr<2) then
+-          result:=nr+6
++          result:=nr+1
+         else
+           result:=-1;
+       end;
+diff --git a/compiler/s390x/cpupara.pas b/compiler/s390x/cpupara.pas
+index f72f868d..0dc34ba1 100644
+--- a/compiler/s390x/cpupara.pas
++++ b/compiler/s390x/cpupara.pas
+@@ -136,7 +136,9 @@       tcpuparamanager = class(tparamanager)
+             if calloption in cdecl_pocalls then
+               result:=false
+             else
+-              result:=(varspez=vs_const) or not(def.size in [0..3*sizeof(aint)]);
++              { only sizes that fit exactly into integer locations; other
++                sizes would need big endian shifting of partial registers }
++              result:=(varspez=vs_const) or not(def.size in [0,1,2,4,8,16,24]);
+           arraydef:
+             { C arrays are always passed by reference }
+             result:=(tarraydef(def).highrange>=tarraydef(def).lowrange) or
+@@ -474,7 +476,12 @@            (paradef.typ=recorddef) then
+           objectdef,
+           variantdef:
+             begin
+-              fdef:=complex_like_float_type(paradef);
++              { TODO: XPLINK passes records consisting of two floating point
++                fields of the same type ("complex-like") in FPRs; splitting
++                them into two floating point locations is not yet supported
++                by the generic code (internal error 200408162), so they are
++                passed like other records for now (differs from C) }
++              fdef:=nil;
+               if assigned(fdef) and not isvararg then
+                 begin
+                   add_float_loc(fdef);
+@@ -486,8 +493,16 @@            (paradef.typ=recorddef) then
+                       ((paradef.typ=procvardef) and tprocvardef(paradef).is_addressonly) then
+                 add_int_loc(OS_ADDR,paradef)
+               else
++                if paralen in [1,2,4] then
++                  { small records and sets: an integer of the same size, so
++                    that caller and callee agree on the position of the data
++                    (big endian) }
++                  add_int_loc(int_cgsize(paralen),cgsize_orddef(int_cgsize(paralen)))
++                else
+                 begin
+-                  { passed by value as a sequence of 64 bit integers }
++                  { passed by value as a sequence of 64 bit integers
++                    TODO: C passes records of other sizes than multiples of
++                    8 left-aligned in 64 bit slots }
+                   para.size:=OS_NO;
+                   while paralen>0 do
+                     begin
+-- 
+2.43.0
+

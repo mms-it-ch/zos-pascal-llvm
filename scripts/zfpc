@@ -1,0 +1,10 @@
+#!/bin/sh
+# zfpc: Free Pascal für z/OS (Cross-Compiler s390x/zos, LLVM-Backend).
+#
+#   zfpc [fpc-Optionen] prog.pas
+#
+# Übersetzt nach GOFF, bindet auf z/OS (zos-ld) und hinterlässt ./prog als
+# Start-Skript, das das Programm auf z/OS ausführt. Mit -s wird nur übersetzt.
+# Umgebung: ZFPC_PREFIX (Standard ~/opt/zfpc), siehe scripts/build-rtl.sh.
+PREFIX=${ZFPC_PREFIX:-$HOME/opt/zfpc}
+exec "$PREFIX/bin/ppcs390x" -Tzos -Clv17.0 -n -FD"$PREFIX/bin" -Fu"$PREFIX/units/zos" "$@"

@@ -1,0 +1,35 @@
+From 051afe8fdbe5b271f6002a95daaf18d4e55a6fd0 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 13:34:28 +0200
+Subject: [PATCH 4/6] [SystemZ][z/OS] Emit the ADA for aliases of functions
+
+The LD symbol of a function refers to its ADA, which the binder uses for
+the environment (R5) in function descriptors. The labels emitted for
+aliases of the function had no ADA, so a call through an alias got a
+wrong environment and the first access to global data failed with S0C4.
+
+Found with Free Pascal, which calls many RTL routines through aliases.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
+index 03f8489e0..86957fe65 100644
+--- a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
++++ b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
+@@ -1941,6 +1941,10 @@ void SystemZAsmPrinter::emitFunctionEntryLabel() {
+       OutStreamer->emitSymbolAttribute(Sym, MCSA_ELF_TypeFunction);
+       emitVisibility(Sym, Alias->getVisibility());
+       emitLinkage(Alias, Sym);
++      // Like the function itself, the alias needs the ADA: the binder uses it
++      // for the environment in function descriptors of calls via the alias.
++      static_cast<SystemZTargetzOSStreamer *>(getTargetStreamer())
++          ->emitADA(Sym, getObjFileLowering().getADASection());
+       OutStreamer->emitLabel(Sym);
+     }
+   }
+-- 
+2.43.0
+

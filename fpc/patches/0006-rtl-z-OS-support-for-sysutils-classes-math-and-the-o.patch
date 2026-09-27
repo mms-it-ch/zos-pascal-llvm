@@ -1,0 +1,499 @@
+From ab88195ea75d92df33ae591994979fb5289b0e89 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 14:18:20 +0200
+Subject: [PATCH 06/10] rtl: z/OS support for sysutils, classes, math and the
+ other base units
+
+- objpas: iterate over the resource string pointer lists on z/OS
+  (FPC_RESSTR_PTRLIST, see the compiler change)
+- baseunix/unix: z/OS mmap constants (from ostypes.inc), SeekDir/TellDir
+  through the C library (DIR is opaque), no GetDomainName
+- unxdeclh/oscdeclh: fpFlock through fcntl (no flock), fpfStatFS through
+  fstatvfs, no futimens on z/OS
+- initc: errno through __errno; errors: StrError through strerror (no
+  sys_errlist)
+- zos: struct statvfs (measured on z/OS), MAP_ANONYMOUS, ptypes.inc only
+  included by the system unit, SignalToRunError is the default signal
+  handler used by sysutils
+- s390x: mathu.inc (fixed rounding/exception modes for now)
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/objpas/objpas.pp  | 73 +++++++++++++++++++++++++++++++++++++++++++
+ rtl/s390x/mathu.inc   | 39 ++++++++++++++++++++++-
+ rtl/unix/baseunix.pp  |  7 +++++
+ rtl/unix/errors.pp    | 10 ++++++
+ rtl/unix/initc.pp     |  4 +++
+ rtl/unix/oscdeclh.inc |  3 ++
+ rtl/unix/unix.pp      | 29 +++++++++++++++--
+ rtl/unix/unxdeclh.inc |  4 +--
+ rtl/zos/errnostr.inc  | 12 ++-----
+ rtl/zos/ostypes.inc   |  5 ++-
+ rtl/zos/ptypes.inc    | 17 +++++++++-
+ rtl/zos/sighnd.inc    |  2 +-
+ 12 files changed, 187 insertions(+), 18 deletions(-)
+
+diff --git a/rtl/objpas/objpas.pp b/rtl/objpas/objpas.pp
+index e9cc7040..26057311 100644
+--- a/rtl/objpas/objpas.pp
++++ b/rtl/objpas/objpas.pp
+@@ -370,6 +370,21 @@ interface
+    end;
+    PResourceStringTableList = ^TResourceStringTableList;
+ 
++{$ifdef zos}
++{ z/OS: the binder does not keep the table parts in order; the compiler
++  generates a list of pointers to the entries per unit (see cresstr.pas),
++  TableStart and TableEnd both point to it }
++{$define FPC_RESSTR_PTRLIST}
++{$endif zos}
++{$ifdef FPC_RESSTR_PTRLIST}
++   PResStrPtrList = ^TResStrPtrList;
++   TResStrPtrList = record
++     Count : SizeInt;
++     { Entries[0] is the unit name entry }
++     Entries : array[0..0] of PResourceStringRecord;
++   end;
++{$endif FPC_RESSTR_PTRLIST}
++
+ { Support for string constants initialized with resourcestrings }
+ {$ifdef FPC_HAS_RESSTRINITS}
+    PResStrInitEntry = ^TResStrInitEntry;
+@@ -429,12 +444,26 @@ procedure FinalizeResourceStringRefs;
+ Var
+   ResStr : PResourceStringRecord;
+   i      : integer;
++{$ifdef FPC_RESSTR_PTRLIST}
++  j      : SizeInt;
++{$endif FPC_RESSTR_PTRLIST}
+   s      : RTLString;
+ begin
+   With ResourceStringTable^ do
+     begin
+       For i:=0 to Count-1 do
+         begin
++{$ifdef FPC_RESSTR_PTRLIST}
++          ResStr:=PResStrPtrList(Tables[I].TableStart)^.Entries[0];
++          { Skip first entry (name of the Unit) }
++          for j:=1 to PResStrPtrList(Tables[I].TableStart)^.Count do
++            begin
++              ResStr:=PResStrPtrList(Tables[I].TableStart)^.Entries[j];
++              s:=SetFunction(ResStr^.Name,ResStr^.DefaultValue,Longint(ResStr^.HashValue),arg);
++              if s<>'' then
++                ResStr^.CurrentValue:=s;
++            end;
++{$else FPC_RESSTR_PTRLIST}
+           ResStr:=Tables[I].TableStart^;
+           { Skip first entry (name of the Unit) }
+           inc(ResStr);
+@@ -445,6 +474,7 @@ procedure FinalizeResourceStringRefs;
+                 ResStr^.CurrentValue:=s;
+               inc(ResStr);
+             end;
++{$endif FPC_RESSTR_PTRLIST}
+         end;
+     end;
+ {$ifdef FPC_HAS_RESSTRINITS}
+@@ -457,6 +487,9 @@ procedure FinalizeResourceStringRefs;
+ Var
+   ResStr : PResourceStringRecord;
+   i      : integer;
++{$ifdef FPC_RESSTR_PTRLIST}
++  j      : SizeInt;
++{$endif FPC_RESSTR_PTRLIST}
+   s,
+   UpUnitName : AnsiString;
+ begin
+@@ -465,6 +498,19 @@ procedure FinalizeResourceStringRefs;
+       UpUnitName:=UpCase(UnitName);
+       For i:=0 to Count-1 do
+         begin
++{$ifdef FPC_RESSTR_PTRLIST}
++          ResStr:=PResStrPtrList(Tables[I].TableStart)^.Entries[0];
++          { Check name of the Unit }
++          if ResStr^.Name<>UpUnitName then
++            continue;
++          for j:=1 to PResStrPtrList(Tables[I].TableStart)^.Count do
++            begin
++              ResStr:=PResStrPtrList(Tables[I].TableStart)^.Entries[j];
++              s:=SetFunction(ResStr^.Name,ResStr^.DefaultValue,Longint(ResStr^.HashValue),arg);
++              if s<>'' then
++                ResStr^.CurrentValue:=s;
++            end;
++{$else FPC_RESSTR_PTRLIST}
+           ResStr:=Tables[I].TableStart^;
+           { Check name of the Unit }
+           if ResStr^.Name<>UpUnitName then
+@@ -477,6 +523,7 @@ procedure FinalizeResourceStringRefs;
+                 ResStr^.CurrentValue:=s;
+               inc(ResStr);
+             end;
++{$endif FPC_RESSTR_PTRLIST}
+         end;
+     end;
+ {$ifdef FPC_HAS_RESSTRINITS}
+@@ -491,11 +538,23 @@ procedure FinalizeResourceStringRefs;
+ Var
+   ResStr : PResourceStringRecord;
+   i      : integer;
++{$ifdef FPC_RESSTR_PTRLIST}
++  j      : SizeInt;
++{$endif FPC_RESSTR_PTRLIST}
+ begin
+   With ResourceStringTable^ do
+     begin
+       For i:=0 to Count-1 do
+         begin
++{$ifdef FPC_RESSTR_PTRLIST}
++          ResStr:=PResStrPtrList(Tables[I].TableStart)^.Entries[0];
++          { Skip first entry (name of the Unit) }
++          for j:=1 to PResStrPtrList(Tables[I].TableStart)^.Count do
++            begin
++              ResStr:=PResStrPtrList(Tables[I].TableStart)^.Entries[j];
++              ResStr^.CurrentValue:=ResStr^.DefaultValue;
++            end;
++{$else FPC_RESSTR_PTRLIST}
+           ResStr:=Tables[I].TableStart^;
+           { Skip first entry (name of the Unit) }
+           inc(ResStr);
+@@ -504,6 +563,7 @@ procedure FinalizeResourceStringRefs;
+               ResStr^.CurrentValue:=ResStr^.DefaultValue;
+               inc(ResStr);
+             end;
++{$endif FPC_RESSTR_PTRLIST}
+         end;
+     end;
+ end;
+@@ -513,11 +573,23 @@ procedure FinalizeResourceStringRefs;
+ Var
+   ResStr : PResourceStringRecord;
+   i      : integer;
++{$ifdef FPC_RESSTR_PTRLIST}
++  j      : SizeInt;
++{$endif FPC_RESSTR_PTRLIST}
+ begin
+   With ResourceStringTable^ do
+     begin
+       For i:=0 to Count-1 do
+         begin
++{$ifdef FPC_RESSTR_PTRLIST}
++          ResStr:=PResStrPtrList(Tables[I].TableStart)^.Entries[0];
++          { Skip first entry (name of the Unit) }
++          for j:=1 to PResStrPtrList(Tables[I].TableStart)^.Count do
++            begin
++              ResStr:=PResStrPtrList(Tables[I].TableStart)^.Entries[j];
++              ResStr^.CurrentValue:='';
++            end;
++{$else FPC_RESSTR_PTRLIST}
+           ResStr:=Tables[I].TableStart^;
+           { Skip first entry (name of the Unit) }
+           inc(ResStr);
+@@ -526,6 +598,7 @@ procedure FinalizeResourceStringRefs;
+               ResStr^.CurrentValue:='';
+               inc(ResStr);
+             end;
++{$endif FPC_RESSTR_PTRLIST}
+         end;
+     end;
+ end;
+diff --git a/rtl/s390x/mathu.inc b/rtl/s390x/mathu.inc
+index 1dae4c61..edf8a31c 100644
+--- a/rtl/s390x/mathu.inc
++++ b/rtl/s390x/mathu.inc
+@@ -11,4 +11,41 @@
+ 
+  **********************************************************************}
+ 
+-{ s390x: nur LLVM-Codegenerator, die generischen Pascal-Routinen werden benutzt }
++
++{ TODO: use fenv of the z/OS C runtime (fegetround/fesetround,
++  feenableexcept); fixed values as on wasm32 for now }
++
++
++function GetRoundMode: TFPURoundingMode;
++begin
++  GetRoundMode:=rmNearest;
++end;
++
++function SetRoundMode(const RoundMode: TFPURoundingMode): TFPURoundingMode;
++begin
++  SetRoundMode:=rmNearest;
++end;
++
++function GetPrecisionMode: TFPUPrecisionMode;
++begin
++  GetPrecisionMode:=pmDouble;
++end;
++
++function SetPrecisionMode(const Precision: TFPUPrecisionMode): TFPUPrecisionMode;
++begin
++  SetPrecisionMode:=pmDouble;
++end;
++
++function GetExceptionMask: TFPUExceptionMask;
++begin
++  GetExceptionMask:=[exDenormalized,exOverflow,exPrecision];
++end;
++
++function SetExceptionMask(const Mask: TFPUExceptionMask): TFPUExceptionMask;
++begin
++  SetExceptionMask:=[exDenormalized,exOverflow,exPrecision];
++end;
++
++procedure ClearExceptions(RaisePending: Boolean);
++begin
++end;
+diff --git a/rtl/unix/baseunix.pp b/rtl/unix/baseunix.pp
+index d659d124..7700e766 100644
+--- a/rtl/unix/baseunix.pp
++++ b/rtl/unix/baseunix.pp
+@@ -58,6 +58,12 @@
+ { Fairly portable constants. I'm not going to waste time to duplicate and alias
+ them anywhere}
+ 
++{$ifdef zos}
++{ z/OS: the mmap constants differ, they are defined in ostypes.inc }
++Const
++  MAP_ANON = MAP_ANONYMOUS;
++  MAP_TYPE = MAP_SHARED or MAP_PRIVATE;  { Mask for type of mapping }
++{$else zos}
+ Const
+   MAP_FAILED    = pointer(-1);  { mmap() has failed }
+   MAP_SHARED    =  $1;          { Share changes }
+@@ -73,6 +79,7 @@
+   PROT_WRITE    =  $2;          { page can be written }
+   PROT_EXEC     =  $4;          { page can be executed }
+   PROT_NONE     =  $0;          { page can not be accessed }
++{$endif zos}
+ 
+ implementation
+ 
+diff --git a/rtl/unix/errors.pp b/rtl/unix/errors.pp
+index 5e7a4053..5643c8fd 100644
+--- a/rtl/unix/errors.pp
++++ b/rtl/unix/errors.pp
+@@ -30,6 +30,15 @@
+ 
+ Implementation
+ 
++{$ifdef zos}
++{ z/OS has no sys_errlist }
++function c_strerror(err: cint): PAnsiChar; cdecl; external 'c' name 'strerror';
++
++Function StrError(err:cint):string;
++begin
++  StrError:=StrPas(c_strerror(err));
++end;
++{$else zos}
+ Function StrError(err:cint):string;
+ var s : string[12];
+ begin
+@@ -41,6 +50,7 @@
+   else
+    StrError:=StrPas(Sys_ErrList[err]);
+ end;
++{$endif zos}
+ 
+ 
+ procedure PError(const s:string; Errno : cint);
+diff --git a/rtl/unix/initc.pp b/rtl/unix/initc.pp
+index 36496241..cec09c45 100644
+--- a/rtl/unix/initc.pp
++++ b/rtl/unix/initc.pp
+@@ -91,6 +91,10 @@ function geterrnolocation: pcint; cdecl;external clib name '___errno';
+ function geterrnolocation: pcint; cdecl;external 'root' name '_errnop';
+ {$endif}
+ 
++{$ifdef zos}
++function geterrnolocation: pcint; cdecl;external clib name '__errno';
++{$endif}
++
+ {$ifdef aix}
+ function geterrnolocation: pcint; cdecl;external clib name '_Errno';
+ {$endif}
+diff --git a/rtl/unix/oscdeclh.inc b/rtl/unix/oscdeclh.inc
+index 43ac312a..1fa029bf 100644
+--- a/rtl/unix/oscdeclh.inc
++++ b/rtl/unix/oscdeclh.inc
+@@ -55,7 +55,10 @@
+     Function  FpChmod      (path : PAnsiChar; Mode : TMode): cInt; cdecl; external clib name 'chmod';
+     Function  FpChown   (path : PAnsiChar; owner : TUid; group : TGid): cInt; cdecl; external clib name 'chown';
+     Function  FPUtime(path:PAnsiChar;times:putimbuf):cint; cdecl; external clib name 'utime';
++{$ifndef zos}
++    { z/OS has no futimens }
+     Function  FPFUtimens(handle: cint;constref times: TTimespecArr):cint; cdecl; external clib name 'futimens';
++{$endif zos}
+     Function  FpPipe       (var fildes : tfildes):cInt; cdecl;external clib name 'pipe';
+     function  FpDup     (oldd:cint):cint; cdecl; external clib name 'dup';
+     function  FpDup2    (oldd:cint;newd:cint):cint; cdecl; external clib name 'dup2';
+diff --git a/rtl/unix/unix.pp b/rtl/unix/unix.pp
+index b452d9ea..8a340296 100644
+--- a/rtl/unix/unix.pp
++++ b/rtl/unix/unix.pp
+@@ -724,6 +724,30 @@ function xfpsystem(p:PAnsiChar):cint; cdecl; external clib name 'system';
+                                Directory
+ ******************************************************************************}
+ 
++{$ifdef zos}
++{ z/OS: DIR is opaque, use the C library }
++procedure c_seekdir(p:pdir;loc:clong); cdecl; external clib name 'seekdir';
++function c_telldir(p:pdir):clong; cdecl; external clib name 'telldir';
++
++procedure SeekDir(p:pdir;loc:clong);
++begin
++  if p=nil then
++    fpseterrno(ESysEBADF)
++  else
++    c_seekdir(p,loc);
++end;
++
++function TellDir(p:pdir):TOff;
++begin
++  if p=nil then
++    begin
++      fpseterrno(ESysEBADF);
++      telldir:=-1;
++    end
++  else
++    telldir:=c_telldir(p);
++end;
++{$else zos}
+ procedure SeekDir(p:pdir;loc:clong);
+ begin
+   if p=nil then
+@@ -757,6 +781,7 @@ function TellDir(p:pdir):TOff;
+     the field in the kernel code itself, So I suspect it is an artifact of libc.
+     Michael. }
+ end;
++{$endif zos}
+ 
+ {******************************************************************************
+                                Pipes/Fifo
+@@ -1334,8 +1359,8 @@ function POpen(var F: file; const Prog: UnicodeString; rw: AnsiChar): cint;
+   end;
+ {$endif sunos}
+ 
+-{$ifdef android}
+-{ android doesn't seem to implement GetDomainName
++{$if defined(android) or defined(zos)}
++{ android and z/OS don't seem to implement GetDomainName
+ }
+ Function GetDomainName:String;
+   begin
+diff --git a/rtl/unix/unxdeclh.inc b/rtl/unix/unxdeclh.inc
+index 83ae3e28..8d4db198 100644
+--- a/rtl/unix/unxdeclh.inc
++++ b/rtl/unix/unxdeclh.inc
+@@ -22,7 +22,7 @@
+   {$endif}
+ {$endif}
+ 
+-{$if defined(solaris) or defined(aix)}
++{$if defined(solaris) or defined(aix) or defined(zos)}
+ Function fpFlock (fd,mode : longint) : cint;{$ifdef IN_SYSTEM}forward;{$endif IN_SYSTEM}
+ {$else solaris or aix}
+ {$if not defined(beos) or defined(haiku)}
+@@ -30,7 +30,7 @@
+ {$endif beos}
+ {$endif solaris or aix}
+ 
+-{$if defined(beos) or defined(solaris) }
++{$if defined(beos) or defined(solaris) or defined(zos)}
+ Function fpfStatFS(Fd:Longint; Info:pstatfs):cint; cdecl; external clib name 'fstatvfs';
+ {$else beos or solaris }
+ Function fpfStatFS(Fd:Longint; Info:pstatfs):cint; cdecl; external clib name 'fstatfs'{$ifdef darin_new_iostructs_suffix}+'$INODE64'{$endif};
+diff --git a/rtl/zos/errnostr.inc b/rtl/zos/errnostr.inc
+index 8e6ebf3e..b92073b4 100644
+--- a/rtl/zos/errnostr.inc
++++ b/rtl/zos/errnostr.inc
+@@ -1,8 +1,8 @@
+ {
+     This file is part of the Free Pascal run time library.
+-    Copyright (c) 2006 by Florian Klaempfl
++    Copyright (c) 2026 by the Free Pascal development team.
+ 
+-    Contains SunOS specific errors for error.pp in rtl/unix
++    z/OS has no sys_errlist; StrError uses strerror (see unix/errors.pp)
+ 
+     See the file COPYING.FPC, included in this distribution,
+     for details about the copyright.
+@@ -12,11 +12,3 @@
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ 
+  **********************************************************************}
+-
+-const
+-  sys_errn = 128;
+-
+-{ since we're libc-based, just just the libc version }
+-var
+-  sys_errlist:array[0..sys_errn-1] of PAnsiChar; cvar; external;
+-
+diff --git a/rtl/zos/ostypes.inc b/rtl/zos/ostypes.inc
+index 5e190b9c..a24774b9 100644
+--- a/rtl/zos/ostypes.inc
++++ b/rtl/zos/ostypes.inc
+@@ -19,7 +19,9 @@
+ 
+  **********************************************************************}
+ 
+-{$i ptypes.inc}
++{$IFDEF FPC_IS_SYSTEM}
++  {$i ptypes.inc}
++{$ENDIF}
+ 
+ CONST
+    FD_MAXFDSET     = 2047;          { fd_set has 256 bytes }
+@@ -181,6 +183,7 @@    dir = record
+     MAP_SHARED  = 2;
+     MAP_PRIVATE = 1;
+     MAP_FIXED   = 4;
++    MAP_ANONYMOUS = 32;       { z/OS 3.1 and later }
+     MAP_FAILED  = pointer(-1);
+ 
+ type
+diff --git a/rtl/zos/ptypes.inc b/rtl/zos/ptypes.inc
+index e57ec738..f92cf58b 100644
+--- a/rtl/zos/ptypes.inc
++++ b/rtl/zos/ptypes.inc
+@@ -112,8 +112,23 @@   timespec    = record
+ 
+   fsblkcnt_t = culong;
+ 
++  { struct statvfs (128 bytes, used with fstatvfs) }
+   TStatfs = record
+-    dummy: array[0..255] of byte;
++    __pad0  : array[0..7] of byte;
++    bsize   : culong;
++    blocks  : culong;
++    __pad1  : array[0..7] of byte;
++    bavail  : culong;
++    flag    : culong;
++    __pad2  : array[0..23] of byte;
++    frsize  : culong;
++    bfree   : culong;
++    files   : cuint;
++    ffree   : cuint;
++    favail  : cuint;
++    __pad3  : array[0..11] of byte;
++    fsid    : culong;
++    namemax : culong;
+   end;
+   PStatFS=^TStatFS;
+ 
+diff --git a/rtl/zos/sighnd.inc b/rtl/zos/sighnd.inc
+index 72890935..54c67cc5 100644
+--- a/rtl/zos/sighnd.inc
++++ b/rtl/zos/sighnd.inc
+@@ -16,7 +16,7 @@
+ 
+  **********************************************************************}
+ 
+-procedure SignalToRunerror(Sig: longint; info : PSigInfo; SigContext:PSigContext); cdecl;
++procedure SignalToRunerror(Sig: longint; info : PSigInfo; SigContext:PSigContext); public name '_FPC_DEFAULTSIGHANDLER'; cdecl;
+ var
+   res : word;
+ begin
+-- 
+2.43.0
+

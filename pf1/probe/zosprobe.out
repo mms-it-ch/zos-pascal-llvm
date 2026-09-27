@@ -1,0 +1,404 @@
+{ Erzeugt von pf1/probe/zosprobe.c auf z/OS - nicht von Hand ändern }
+
+{ --- Typen --- }
+type
+  dev_t = cuint;
+  ino_t = cuint;
+  mode_t = cint;
+  nlink_t = cint;
+  uid_t = cint;
+  gid_t = cint;
+  off_t = clong;
+  pid_t = cint;
+  size_t = culong;
+  ssize_t = clong;
+  time_t = clong;
+  clock_t = cuint;
+  suseconds_t = cint;
+  blksize_t = cint;
+  blkcnt_t = clong;
+  socklen_t = cuint;
+  wchar_t = cuint;
+  wint_t = cint;
+  rlim_t = culong;
+  clockid_t = cuint;
+  key_t = cint;
+  id_t = cint;
+
+  sigset_t = record _data: array[0..7] of byte; end; { C: 8 Bytes, Ausrichtung 4 }
+  pthread_t = record _data: array[0..7] of byte; end; { C: 8 Bytes, Ausrichtung 1 }
+  pthread_attr_t = record _data: array[0..103] of byte; end; { C: 104 Bytes, Ausrichtung 8 }
+  pthread_mutex_t = record _data: array[0..7] of byte; end; { C: 8 Bytes, Ausrichtung 8 }
+  pthread_mutexattr_t = record _data: array[0..7] of byte; end; { C: 8 Bytes, Ausrichtung 1 }
+  pthread_cond_t = record _data: array[0..7] of byte; end; { C: 8 Bytes, Ausrichtung 1 }
+  pthread_condattr_t = record _data: array[0..7] of byte; end; { C: 8 Bytes, Ausrichtung 1 }
+  pthread_key_t = record _data: array[0..7] of byte; end; { C: 8 Bytes, Ausrichtung 1 }
+  pthread_once_t = record _data: array[0..3] of byte; end; { C: 4 Bytes, Ausrichtung 4 }
+  pthread_rwlock_t = record _data: array[0..7] of byte; end; { C: 8 Bytes, Ausrichtung 1 }
+  fd_set = record _data: array[0..255] of byte; end; { C: 256 Bytes, Ausrichtung 4 }
+  c_jmp_buf = record _data: array[0..1023] of byte; end; { C: 1024 Bytes, Ausrichtung 8 }
+  mbstate_t = record _data: array[0..1] of byte; end; { C: 2 Bytes, Ausrichtung 2 }
+
+{ --- Strukturen --- }
+type
+  stat = record { C: 216 Bytes }
+    st_eye: array[0..3] of AnsiChar;
+    st_length: cushort;
+    st_version: cushort;
+    st_mode: cint;
+    st_ino: cuint;
+    st_dev: cuint;
+    st_nlink: cint;
+    st_uid: cint;
+    st_gid: cint;
+    st_size: clong;
+    _pad0: array[0..11] of byte;
+    st_rdev: cuint;
+    _pad1: array[0..7] of byte;
+    st_blksize: cint;
+    _pad2: array[0..35] of byte;
+    st_blocks: clong;
+    _pad3: array[0..39] of byte;
+    st_atime: clong;
+    st_mtime: clong;
+    st_ctime: clong;
+    _pad4: array[0..39] of byte;
+  end;
+
+  dirent = record { C: 272 Bytes }
+    _pad0: array[0..3] of byte;
+    d_ino: cuint;
+    _pad1: array[0..7] of byte;
+    d_name: array[0..255] of AnsiChar;
+  end;
+
+  timeval = record { C: 16 Bytes }
+    tv_sec: clong;
+    _pad0: array[0..3] of byte;
+    tv_usec: cint;
+  end;
+
+  timespec = record { C: 16 Bytes }
+    tv_sec: clong;
+    tv_nsec: clong;
+  end;
+
+  timezone = record { C: 8 Bytes }
+    tz_minuteswest: cint;
+    tz_dsttime: cint;
+  end;
+
+  tms = record { C: 16 Bytes }
+    tms_utime: cuint;
+    tms_stime: cuint;
+    tms_cutime: cuint;
+    tms_cstime: cuint;
+  end;
+
+  tm = record { C: 36 Bytes }
+    tm_sec: cint;
+    tm_min: cint;
+    tm_hour: cint;
+    tm_mday: cint;
+    tm_mon: cint;
+    tm_year: cint;
+    tm_wday: cint;
+    tm_yday: cint;
+    tm_isdst: cint;
+  end;
+
+  utsname = record { C: 80 Bytes }
+    sysname: array[0..15] of AnsiChar;
+    nodename: array[0..31] of AnsiChar;
+    release: array[0..7] of AnsiChar;
+    version: array[0..7] of AnsiChar;
+    machine: array[0..15] of AnsiChar;
+  end;
+
+  utimbuf = record { C: 16 Bytes }
+    actime: clong;
+    modtime: clong;
+  end;
+
+  flock = record { C: 24 Bytes }
+    l_type: cshort;
+    l_whence: cshort;
+    l_start: clong;
+    l_len: clong;
+    l_pid: cint;
+  end;
+
+  rlimit = record { C: 16 Bytes }
+    rlim_cur: culong;
+    rlim_max: culong;
+  end;
+
+  iovec = record { C: 16 Bytes }
+    iov_base: pointer;
+    iov_len: culong;
+  end;
+
+  pollfd = record { C: 8 Bytes }
+    fd: cint;
+    events: cshort;
+    revents: cshort;
+  end;
+
+  sigactionrec = record { C: 32 Bytes }
+    sa_handler: pointer;
+    sa_mask: array[0..7] of byte;
+    sa_flags: cint;
+    _pad0: array[0..11] of byte;
+  end;
+
+  siginfo_t = record { C: 64 Bytes }
+    si_signo: cint;
+    si_errno: cint;
+    si_code: cint;
+    _pad0: array[0..27] of byte;
+    si_addr: pointer;
+    _pad1: array[0..15] of byte;
+  end;
+
+  termios = record { C: 28 Bytes }
+    c_cflag: cuint;
+    c_iflag: cuint;
+    c_lflag: cuint;
+    c_oflag: cuint;
+    c_cc: array[0..10] of byte;
+    _pad0: array[0..0] of byte;
+  end;
+
+  statvfs = record { C: 128 Bytes }
+    _pad0: array[0..7] of byte;
+    bsize: culong;
+    blocks: culong;
+    _pad1: array[0..7] of byte;
+    bavail: culong;
+    flag: culong;
+    _pad2: array[0..23] of byte;
+    frsize: culong;
+    bfree: culong;
+    files: cuint;
+    ffree: cuint;
+    favail: cuint;
+    _pad3: array[0..11] of byte;
+    fsid: culong;
+    namemax: culong;
+  end;
+
+{ --- Konstanten --- }
+const
+  EPERM = 139;
+  ENOENT = 129;
+  ESRCH = 143;
+  EINTR = 120;
+  EIO = 122;
+  ENXIO = 138;
+  E2BIG = 145;
+  ENOEXEC = 130;
+  EBADF = 113;
+  ECHILD = 115;
+  EAGAIN = 112;
+  ENOMEM = 132;
+  EACCES = 111;
+  EFAULT = 118;
+  EBUSY = 114;
+  EEXIST = 117;
+  EXDEV = 144;
+  ENODEV = 128;
+  ENOTDIR = 135;
+  EISDIR = 123;
+  EINVAL = 121;
+  ENFILE = 127;
+  EMFILE = 124;
+  ENOTTY = 137;
+  EFBIG = 119;
+  ENOSPC = 133;
+  ESPIPE = 142;
+  EROFS = 141;
+  EMLINK = 125;
+  EPIPE = 140;
+  EDOM = 1;
+  ERANGE = 2;
+  EDEADLK = 116;
+  ENAMETOOLONG = 126;
+  ENOLCK = 131;
+  ENOSYS = 134;
+  ENOTEMPTY = 136;
+  ELOOP = 146;
+  EWOULDBLOCK = 1102;
+  ENOMSG = 1139;
+  EILSEQ = 147;
+  EINPROGRESS = 1103;
+  EALREADY = 1104;
+  ENOTSOCK = 1105;
+  EDESTADDRREQ = 1106;
+  EMSGSIZE = 1107;
+  EPROTOTYPE = 1108;
+  ENOPROTOOPT = 1109;
+  EPROTONOSUPPORT = 1110;
+  EOPNOTSUPP = 1112;
+  EAFNOSUPPORT = 1114;
+  EADDRINUSE = 1115;
+  EADDRNOTAVAIL = 1116;
+  ENETDOWN = 1117;
+  ENETUNREACH = 1118;
+  ECONNABORTED = 1120;
+  ECONNRESET = 1121;
+  ENOBUFS = 1122;
+  EISCONN = 1123;
+  ENOTCONN = 1124;
+  ETIMEDOUT = 1127;
+  ECONNREFUSED = 1128;
+  EHOSTUNREACH = 1130;
+  ETXTBSY = 1101;
+  EOVERFLOW = 149;
+  ECANCELED = 1152;
+  ENOTSUP = 247;
+  O_RDONLY = 2;
+  O_WRONLY = 1;
+  O_RDWR = 3;
+  O_ACCMODE = 3;
+  O_CREAT = 128;
+  O_EXCL = 64;
+  O_NOCTTY = 32;
+  O_TRUNC = 16;
+  O_APPEND = 8;
+  O_NONBLOCK = 4;
+  O_SYNC = 256;
+  F_DUPFD = 0;
+  F_GETFD = 1;
+  F_SETFD = 2;
+  F_GETFL = 259;
+  F_SETFL = 4;
+  F_GETLK = 5;
+  F_SETLK = 6;
+  F_SETLKW = 7;
+  FD_CLOEXEC = 1;
+  F_RDLCK = 1;
+  F_WRLCK = 2;
+  F_UNLCK = 3;
+  F_OK = 8;
+  R_OK = 4;
+  W_OK = 2;
+  X_OK = 1;
+  SEEK_SET = 0;
+  SEEK_CUR = 1;
+  SEEK_END = 2;
+  S_IFMT = 4278190080;
+  S_IFIFO = 67108864;
+  S_IFCHR = 33554432;
+  S_IFDIR = 16777216;
+  S_IFBLK = 100663296;
+  S_IFREG = 50331648;
+  S_IFLNK = 83886080;
+  S_IFSOCK = 117440512;
+  S_ISUID = 2048;
+  S_ISGID = 1024;
+  S_ISVTX = 512;
+  S_IRUSR = 256;
+  S_IWUSR = 128;
+  S_IXUSR = 64;
+  S_IRGRP = 32;
+  S_IWGRP = 16;
+  S_IXGRP = 8;
+  S_IROTH = 4;
+  S_IWOTH = 2;
+  S_IXOTH = 1;
+  WNOHANG = 1;
+  WUNTRACED = 2;
+  SIGHUP = 1;
+  SIGINT = 2;
+  SIGQUIT = 24;
+  SIGILL = 4;
+  SIGTRAP = 26;
+  SIGABRT = 3;
+  SIGBUS = 10;
+  SIGFPE = 8;
+  SIGKILL = 9;
+  SIGUSR1 = 16;
+  SIGSEGV = 11;
+  SIGUSR2 = 17;
+  SIGPIPE = 13;
+  SIGALRM = 14;
+  SIGTERM = 15;
+  SIGCHLD = 20;
+  SIGCONT = 19;
+  SIGSTOP = 7;
+  SIGTSTP = 25;
+  SIGTTIN = 21;
+  SIGTTOU = 22;
+  SIGURG = 6;
+  SIGXCPU = 29;
+  SIGXFSZ = 30;
+  SIGVTALRM = 31;
+  SIGPROF = 32;
+  SIGWINCH = 28;
+  SIGIO = 23;
+  SIGSYS = 12;
+  SIG_BLOCK = 0;
+  SIG_UNBLOCK = 1;
+  SIG_SETMASK = 2;
+  FPE_INTDIV = 31;
+  FPE_INTOVF = 32;
+  FPE_FLTDIV = 33;
+  FPE_FLTOVF = 34;
+  FPE_FLTUND = 35;
+  FPE_FLTRES = 36;
+  FPE_FLTINV = 37;
+  FPE_FLTSUB = 38;
+  ILL_ILLOPC = 11;
+  SEGV_MAPERR = 51;
+  SEGV_ACCERR = 52;
+  SA_NOCLDSTOP = 2147483648;
+  SA_RESTART = 134217728;
+  SA_SIGINFO = 67108864;
+  SA_NODEFER = 16777216;
+  SA_RESETHAND = 268435456;
+  SA_ONSTACK = 536870912;
+  (long)SIG_DFL = 0;
+  (long)SIG_IGN = 1;
+  PROT_READ = 1;
+  PROT_WRITE = 2;
+  PROT_EXEC = 8;
+  PROT_NONE = 4;
+  MAP_SHARED = 2;
+  MAP_PRIVATE = 1;
+  MAP_FIXED = 4;
+  POLLIN = 3;
+  POLLPRI = 16;
+  POLLOUT = 4;
+  POLLERR = 32;
+  POLLHUP = 64;
+  POLLNVAL = 128;
+  RTLD_LAZY = 4;
+  RTLD_NOW = 2;
+  RTLD_GLOBAL = 65536;
+  RTLD_LOCAL = 524288;
+  PATH_MAX = 1024;
+  NAME_MAX = 255;
+  CLOCKS_PER_SEC = 1000000;
+  BUFSIZ = 512;
+  EOF = -1;
+  RLIMIT_CORE = 4;
+  RLIMIT_CPU = 0;
+  RLIMIT_DATA = 2;
+  RLIMIT_FSIZE = 1;
+  RLIMIT_NOFILE = 6;
+  RLIMIT_STACK = 3;
+  RLIMIT_AS = 5;
+  PRIO_PROCESS = 1;
+  PRIO_PGRP = 2;
+  PRIO_USER = 3;
+  TCSANOW = 0;
+  TCSADRAIN = 1;
+  TCSAFLUSH = 2;
+  CODESET = 49;
+  LC_ALL = -1;
+  LC_CTYPE = 1;
+  _SC_CLK_TCK = 3;
+  _SC_PAGESIZE = 135;
+  sizeof(long) = 8;
+  sizeof(void *) = 8;
+  sizeof(long double) = 16;

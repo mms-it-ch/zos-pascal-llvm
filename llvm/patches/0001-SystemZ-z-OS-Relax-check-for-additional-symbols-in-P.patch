@@ -1,0 +1,85 @@
+From 525327182cfdb58e90f3d5068e4fd83cabf6367d Mon Sep 17 00:00:00 2001
+From: Kai Nacke <kai.peter.nacke@ibm.com>
+Date: Thu, 10 Sep 2026 09:46:16 -0400
+Subject: [PATCH 1/6] [SystemZ][z/OS] Relax check for additional symbols in PR
+ section (#222435)
+
+The current check in `emitLabel()` is too strict. Inside a PR, there
+cannot be no other external visible label. However, temporary labels
+which are used e.g. for calculating offsets can be emitted. A situation
+in which this occurs is the emission of the DWARF EH tables, in which a
+temporary symbol (with an empty name) is emitted at the begin of the
+table, causing an error message. This change limits the error to
+non-temporary labels.
+
+(cherry picked from commit 3c478e1597c11abbdafef9c08d7e11655ba1cdd5)
+---
+ llvm/lib/MC/MCGOFFStreamer.cpp      |  2 +-
+ llvm/test/CodeGen/SystemZ/zos-eh.ll | 42 +++++++++++++++++++++++++++++
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+ create mode 100644 llvm/test/CodeGen/SystemZ/zos-eh.ll
+
+diff --git a/llvm/lib/MC/MCGOFFStreamer.cpp b/llvm/lib/MC/MCGOFFStreamer.cpp
+index ebe8bc0a0..3496e8c3f 100644
+--- a/llvm/lib/MC/MCGOFFStreamer.cpp
++++ b/llvm/lib/MC/MCGOFFStreamer.cpp
+@@ -61,7 +61,7 @@ void MCGOFFStreamer::emitLabel(MCSymbol *Symbol, SMLoc Loc) {
+   if (Section->isPR()) {
+     if (Section->getBeginSymbol() == nullptr)
+       Section->setBeginSymbol(Symbol);
+-    else
++    else if (!Symbol->isTemporary())
+       getContext().reportError(
+           Loc, "only one symbol can be defined in a PR section.");
+   }
+diff --git a/llvm/test/CodeGen/SystemZ/zos-eh.ll b/llvm/test/CodeGen/SystemZ/zos-eh.ll
+new file mode 100644
+index 000000000..9439289bf
+--- /dev/null
++++ b/llvm/test/CodeGen/SystemZ/zos-eh.ll
+@@ -0,0 +1,42 @@
++; RUN: llc -mtriple s390x-zos -filetype=obj %s -o %t.o
++; RUN: llc -mtriple s390x-zos < %s | FileCheck %s
++
++define { ptr, i32 } @fn_with_lpad() personality ptr @__zos_cxx_personality_v2 {
++start:
++  %_0 = invoke double null(double 0.0, double 0.0, double 0.0)
++          to label %bb1 unwind label %terminate
++terminate:
++  %0 = landingpad { ptr, i32 }
++          filter [0 x ptr] zeroinitializer
++  ret { ptr, i32 } %0
++bb1:
++  ret { ptr, i32 } zeroinitializer
++}
++
++declare i32 @__zos_cxx_personality_v2(...)
++
++; CHECK:      C_WSA64 CATTR ALIGN(2),FILL(0),NOTEXECUTABLE,RMODE(64),PART(.gcc_excepti
++; CHECK-NEXT:                ion_table.fn_with_lpad)
++; CHECK-NEXT: .gcc_exception_table.fn_with_lpad XATTR LINKAGE(XPLINK),REFERENCE(DATA),
++; CHECK-NEXT:                ,SCOPE(SECTION)
++; CHECK-NEXT:  DS 0B
++; CHECK-NEXT: * @LPStart Encoding = omit
++; CHECK-NEXT:  DC XL1'FF'
++; CHECK-NEXT: * @TType Encoding = absptr
++; CHECK-NEXT:  DC XL1'00'
++; CHECK-NEXT: * Call site Encoding = uleb128
++; CHECK-NEXT:  DC XL1'01'
++; CHECK-NEXT: * >> Call Site 1 <<
++; CHECK-NEXT: *   Call between L#tmp0 and L#tmp1
++; CHECK-NEXT: *     jumps to L#tmp2
++; CHECK-NEXT: *   On action: 1
++; CHECK-NEXT:  DC XL1'01'
++; CHECK-NEXT: * >> Action Record 1 <<
++; CHECK-NEXT: *   Filter TypeInfo -1
++; CHECK-NEXT:  DC XL1'7F'
++; CHECK-NEXT: *   No further actions
++; CHECK-NEXT:  DC XL1'00'
++; CHECK-NEXT:  DS 0B
++; CHECK-NEXT: * >> Filter TypeInfos <<
++; CHECK-NEXT:  DC XL1'00'
++; CHECK-NEXT:  DS 0B
+-- 
+2.43.0
+

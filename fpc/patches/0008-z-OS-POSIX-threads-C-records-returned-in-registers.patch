@@ -1,0 +1,252 @@
+From 70d4f63dc8c00e42110ea21d3328a4423bb84c76 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 15:26:38 +0200
+Subject: [PATCH 08/10] z/OS: POSIX threads, C records returned in registers
+
+- rtl: use the POSIX thread API of z/OS (_UNIX03_THREADS: @@PT3...
+  entry points, 64-byte pthread_mutex_t/pthread_cond_t, mutex type
+  values); pthread_attr_setinheritsched/setscope do not exist on z/OS
+- compiler: XPLINK returns C aggregates of 8, 16 and 24 bytes in GPR 1-3;
+  the LLVM code generator marks such results "inreg" (declarations and
+  calls), as clang does
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/agllvm.pas   | 10 ++++++++-
+ compiler/llvm/llvmdef.pas  | 20 ++++++++++++++++-
+ compiler/s390x/cpupara.pas | 46 +++++++++++++++++++++++++++++++++++++-
+ rtl/unix/cthreads.pp       |  5 ++++-
+ rtl/zos/pthread.inc        |  7 +++---
+ rtl/zos/ptypes.inc         |  8 ++++---
+ 6 files changed, 86 insertions(+), 10 deletions(-)
+
+diff --git a/compiler/llvm/agllvm.pas b/compiler/llvm/agllvm.pas
+index 3cd0e37c..0be46a11 100644
+--- a/compiler/llvm/agllvm.pas
++++ b/compiler/llvm/agllvm.pas
+@@ -120,7 +120,7 @@ implementation
+       cutils,cfileutl,
+       fmodule,verbose,
+       objcasm,
+-      aasmcnst,symconst,symdef,symtable,
++      aasmcnst,symconst,symtype,symdef,symtable,
+       llvmbase,itllvm,llvmdef,
+       cgbase,cgutils,cpubase,cpuinfo,triplet,llvminfo;
+ 
+@@ -599,6 +599,7 @@        tdoubleval = record
+       tmpstr,
+       sep: TSymStr;
+       i, opstart: longint;
++      tmpdef: tdef;
+       nested: boolean;
+       opdone,
+       done: boolean;
+@@ -692,6 +693,13 @@        tdoubleval = record
+                 owner.writer.AsmWrite(tmpstr);
+               end;
+             opdone:=true;
++            { the call operand is a procvardef or a pointer to a procdef }
++            tmpdef:=taillvm(hp).oper[taillvm.callpdopernr]^.def;
++            if tmpdef.typ=pointerdef then
++              tmpdef:=tpointerdef(tmpdef).pointeddef;
++            if (tmpdef is tabstractprocdef) and
++               llvm_ret_inreg(tabstractprocdef(tmpdef)) then
++              owner.writer.AsmWrite(' inreg');
+             owner.writer.AsmWrite(' ');
+             owner.writer.AsmWrite(llvmencodetypename(taillvm(hp).oper[taillvm.callpdopernr]^.def,true));
+             opstart:=4;
+diff --git a/compiler/llvm/llvmdef.pas b/compiler/llvm/llvmdef.pas
+index ec619e43..70c6f633 100644
+--- a/compiler/llvm/llvmdef.pas
++++ b/compiler/llvm/llvmdef.pas
+@@ -59,6 +59,11 @@ interface
+     { same as above, but use a type name if possible (for any use) }
+     function llvmencodetypename(def: tdef; pointedtype: boolean = false): TSymStr;
+ 
++    { true if the function result must carry the "inreg" attribute: z/OS
++      XPLINK returns C aggregates of up to 24 bytes in GPR 1, 2 and 3, which
++      the SystemZ backend only does for "inreg" results }
++    function llvm_ret_inreg(def: tabstractprocdef): boolean;
++
+     { encode a procdef/procvardef into the internal format used by LLVM }
+     function llvmencodeproctype(def: tabstractprocdef; const customname: TSymStr; pddecltype: tllvmprocdefdecltype): TSymStr;
+     { incremental version of the above }
+@@ -945,6 +950,15 @@ implementation
+       end;
+ 
+ 
++    function llvm_ret_inreg(def: tabstractprocdef): boolean;
++      begin
++        result:=(target_info.system=system_s390x_zos) and
++          (def.returndef.typ=recorddef) and
++          (def.proccalloption in cdecl_pocalls) and
++          not paramanager.ret_in_param(def.returndef,def);
++      end;
++
++
+     procedure llvmaddencodedproctype(def: tabstractprocdef; const customname: TSymStr; pddecltype: tllvmprocdefdecltype; var encodedstr: TSymStr);
+       var
+         callingconv: ansistring;
+@@ -982,7 +996,11 @@ implementation
+             { specifying result sign extention information for an alias causes
+               an error for some reason }
+             if pddecltype in [lpd_decl,lpd_def] then
+-              encodedstr:=encodedstr+llvmvalueextension2str[signext];
++              begin
++                encodedstr:=encodedstr+llvmvalueextension2str[signext];
++                if llvm_ret_inreg(def) then
++                  encodedstr:=encodedstr+' inreg';
++              end;
+             encodedstr:=encodedstr+' ';
+             llvmaddencodedtype_intern(usedef,[],encodedstr);
+           end
+diff --git a/compiler/s390x/cpupara.pas b/compiler/s390x/cpupara.pas
+index 0dc34ba1..a17b4e65 100644
+--- a/compiler/s390x/cpupara.pas
++++ b/compiler/s390x/cpupara.pas
+@@ -55,6 +55,7 @@       tcpuparamanager = class(tparamanager)
+         function get_saved_registers_fpu(calloption: tproccalloption): tcpuregisterarray; override;
+         function push_addr_param(varspez: tvarspez; def: tdef; calloption: tproccalloption): boolean; override;
+         function get_funcretloc(p: tabstractprocdef; side: tcallercallee; forcetempdef: tdef): tcgpara; override;
++        function ret_in_param(def: tdef; pd: tabstractprocdef): boolean; override;
+         procedure getcgtempparaloc(list: TAsmList; pd: tabstractprocdef; nr: longint; var cgpara: tcgpara); override;
+         function create_paraloc_info(p: tabstractprocdef; side: tcallercallee): longint; override;
+         function create_varargs_paraloc_info(p: tabstractprocdef; side: tcallercallee; varargspara: tvarargsparalist): longint; override;
+@@ -165,15 +166,58 @@       tcpuparamanager = class(tparamanager)
+       end;
+ 
+ 
++    function complex_like_float_type(def: tdef): tdef; forward;
++
++
++    { XPLINK: C functions return aggregates of up to 24 bytes in GPR 1, 2
++      and 3 (clang: inreg [n x i64], see llvm_ret_inreg), complex-like records
++      in FPRs. Only sizes that
++      are a multiple of 8 are implemented; the other sizes would have to be
++      left-justified in the last register. }
++    function c_record_in_regs(def: tdef; pd: tabstractprocdef): boolean;
++      begin
++        result:=(def.typ=recorddef) and
++          (pd.proccalloption in cdecl_pocalls) and
++          (def.size in [8,16,24]) and
++          not assigned(complex_like_float_type(def));
++      end;
++
++
++    function tcpuparamanager.ret_in_param(def: tdef; pd: tabstractprocdef): boolean;
++      begin
++        if handle_common_ret_in_param(def,pd,result) then
++          exit;
++        if c_record_in_regs(def,pd) then
++          result:=false
++        else
++          result:=inherited ret_in_param(def,pd);
++      end;
++
++
+     function tcpuparamanager.get_funcretloc(p: tabstractprocdef; side: tcallercallee; forcetempdef: tdef): tcgpara;
++      const
++        retregs: array[0..2] of tregister = (NR_R1,NR_R2,NR_R3);
+       var
+         paraloc: pcgparalocation;
+         retcgsize: tcgsize;
++        i: longint;
+       begin
+         if set_common_funcretloc_info(p,forcetempdef,retcgsize,result) then
+           exit;
+         paraloc:=result.add_location;
+-        if (result.def.typ=floatdef) then
++        if c_record_in_regs(result.def,p) then
++          begin
++            for i:=0 to result.def.size div 8-1 do
++              begin
++                if i>0 then
++                  paraloc:=result.add_location;
++                paraloc^.loc:=LOC_REGISTER;
++                paraloc^.register:=retregs[i];
++                paraloc^.size:=OS_64;
++                paraloc^.def:=u64inttype;
++              end;
++          end
++        else if (result.def.typ=floatdef) then
+           begin
+             paraloc^.loc:=LOC_FPUREGISTER;
+             paraloc^.register:=NR_FPU_RESULT_REG;
+diff --git a/rtl/unix/cthreads.pp b/rtl/unix/cthreads.pp
+index 14f91148..f8cd2305 100644
+--- a/rtl/unix/cthreads.pp
++++ b/rtl/unix/cthreads.pp
+@@ -434,7 +434,8 @@       tthreadinfo = record
+       writeln('Starting new thread');
+ {$endif DEBUG_MT}
+       pthread_attr_init(@thread_attr);
+-      {$if not defined(HAIKU)and not defined(BEOS) and not defined(ANDROID)}
++      { z/OS has neither pthread_attr_setinheritsched nor pthread_attr_setscope }
++      {$if not defined(HAIKU)and not defined(BEOS) and not defined(ANDROID) and not defined(zos)}
+       {$if defined (solaris) or defined (netbsd) }
+       pthread_attr_setinheritsched(@thread_attr, PTHREAD_INHERIT_SCHED);
+       {$else not solaris}
+@@ -443,7 +444,9 @@       tthreadinfo = record
+       {$ifend}
+ 
+       // will fail under linux -- apparently unimplemented
++      {$ifndef zos}
+       pthread_attr_setscope(@thread_attr, PTHREAD_SCOPE_PROCESS);
++      {$endif zos}
+ 
+       // don't create detached, we need to be able to join (waitfor) on
+       // the newly created thread!
+diff --git a/rtl/zos/pthread.inc b/rtl/zos/pthread.inc
+index 1c8abe20..7ef63589 100644
+--- a/rtl/zos/pthread.inc
++++ b/rtl/zos/pthread.inc
+@@ -26,9 +26,10 @@
+     PTHREAD_CREATE_DETACHED      = 1;
+     PTHREAD_SCOPE_PROCESS        = 1;
+ 
+-    _PTHREAD_MUTEX_NORMAL        = 5;
+-    _PTHREAD_MUTEX_ERRORCHECK    = 3;
+-    _PTHREAD_MUTEX_RECURSIVE     = 4;
++    { values of the POSIX thread API (_UNIX03_THREADS) }
++    _PTHREAD_MUTEX_NORMAL        = 4;
++    _PTHREAD_MUTEX_ERRORCHECK    = 0;
++    _PTHREAD_MUTEX_RECURSIVE     = 1;
+ 
+   type
+     sched_param = record
+diff --git a/rtl/zos/ptypes.inc b/rtl/zos/ptypes.inc
+index f92cf58b..87eed959 100644
+--- a/rtl/zos/ptypes.inc
++++ b/rtl/zos/ptypes.inc
+@@ -149,7 +149,9 @@   mbstate_t = record
+     Prio_User    = 3;
+ 
+  type
+-    { the pthread types are opaque structures on z/OS }
++    { the pthread types are opaque structures on z/OS; sizes of the POSIX
++      thread API (_UNIX03_THREADS, entry points @@PT3...), measured with
++      pf3/thrprobe.c of the zos-pascal-llvm project }
+     pthread_t = record
+       __: array[0..7] of byte;
+     end;
+@@ -160,7 +162,7 @@     pthread_mutexattr_t = record
+       __: array[0..7] of byte;
+     end;
+     pthread_cond_t = record
+-      __: array[0..7] of byte;
++      __: array[0..7] of qword;
+     end;
+     pthread_condattr_t = record
+       __: array[0..7] of byte;
+@@ -169,7 +171,7 @@     pthread_key_t = record
+       __: array[0..7] of byte;
+     end;
+     pthread_mutex_t = record
+-      __: qword;
++      __: array[0..7] of qword;
+     end;
+     pthread_rwlock_t = record
+       __: array[0..7] of byte;
+-- 
+2.43.0
+

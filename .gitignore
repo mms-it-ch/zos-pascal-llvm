@@ -1,0 +1,10 @@
+# Lokale z/OS-Zugangsdaten – nie versionieren
+.zos.env
+build/
+__pycache__/
+*.tar
+*.tar.gz
+*.tar.xz
+*.ppu
+*.zlink
+ppas.sh

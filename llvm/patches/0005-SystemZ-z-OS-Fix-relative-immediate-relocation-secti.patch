@@ -1,0 +1,71 @@
+From 5bc15dea1afb9cc686e9ddbee94b6dfd09466fa1 Mon Sep 17 00:00:00 2001
+From: Kai Nacke <kai.peter.nacke@ibm.com>
+Date: Thu, 10 Sep 2026 10:52:32 -0400
+Subject: [PATCH 5/6] [SystemZ][z/OS] Fix "relative immediate relocation
+ section mismatch" (#222437)
+
+Constants should go inside the text section, but this is not explicitly
+coded. In the test case, the EH table is generated into a PR section.
+Then the constant pool of function `fn_with_const_pool()` is emitted,
+which goes into the PR section of the EH table instead of the code
+section. When the constant is later referenced in the code, the relative
+offset cannot be calculated because different sections are involved.
+The fix is to explicitly return the text section for constants.
+
+(cherry picked from commit 746d09af26a84cdbe1e03aeb436c8ada09ac8ecf)
+---
+ llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h | 3 +++
+ llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp        | 6 ++++++
+ llvm/test/CodeGen/SystemZ/zos-eh.ll                      | 5 +++++
+ 3 files changed, 14 insertions(+)
+
+diff --git a/llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h b/llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h
+index 9d6df8fae..f71602ea3 100644
+--- a/llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h
++++ b/llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h
+@@ -335,6 +335,9 @@ public:
+ 
+   bool shouldPutJumpTableInFunctionSection(bool UsesLabelDifference,
+                                            const Function &F) const override;
++  MCSection *getSectionForConstant(const DataLayout &DL, SectionKind Kind,
++                                   const Constant *C, Align &Alignment,
++                                   const Function *F) const override;
+   MCSection *SelectSectionForGlobal(const GlobalObject *GO, SectionKind Kind,
+                                     const TargetMachine &TM) const override;
+   MCSection *getExplicitSectionGlobal(const GlobalObject *GO, SectionKind Kind,
+diff --git a/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp b/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
+index 6bb073925..27960b9fd 100644
+--- a/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
++++ b/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
+@@ -2854,6 +2854,12 @@ bool TargetLoweringObjectFileGOFF::shouldPutJumpTableInFunctionSection(
+   return true;
+ }
+ 
++MCSection *TargetLoweringObjectFileGOFF::getSectionForConstant(
++    const DataLayout &DL, SectionKind Kind, const Constant *C, Align &Alignment,
++    const Function *F) const {
++  return TextSection;
++}
++
+ MCSection *TargetLoweringObjectFileGOFF::getExplicitSectionGlobal(
+     const GlobalObject *GO, SectionKind Kind, const TargetMachine &TM) const {
+   return SelectSectionForGlobal(GO, Kind, TM);
+diff --git a/llvm/test/CodeGen/SystemZ/zos-eh.ll b/llvm/test/CodeGen/SystemZ/zos-eh.ll
+index 9439289bf..a424de306 100644
+--- a/llvm/test/CodeGen/SystemZ/zos-eh.ll
++++ b/llvm/test/CodeGen/SystemZ/zos-eh.ll
+@@ -13,6 +13,11 @@ bb1:
+   ret { ptr, i32 } zeroinitializer
+ }
+ 
++define double @fn_with_const_pool() {
++start:
++  ret double 1.0   ; forces a constant pool entry (L#CPI1_0)
++}
++
+ declare i32 @__zos_cxx_personality_v2(...)
+ 
+ ; CHECK:      C_WSA64 CATTR ALIGN(2),FILL(0),NOTEXECUTABLE,RMODE(64),PART(.gcc_excepti
+-- 
+2.43.0
+

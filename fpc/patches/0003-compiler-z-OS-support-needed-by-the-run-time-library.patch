@@ -1,0 +1,273 @@
+From 41d8e720d17e853556de06c3827f017acfb7ff12 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 13:35:23 +0200
+Subject: [PATCH 03/10] compiler: z/OS support needed by the run time library
+
+- main is a stub with argc/argv/envp that calls FPC_SYSTEMMAIN (as on AIX)
+- C library functions are called by their external names in ASCII mode:
+  the z/OS headers map many functions with #pragma map (fopen is @@A00246).
+  The table is read from zosmap.txt in the unit search path (generated
+  from the z/OS headers, see zos-pascal-llvm: scripts/gen-zosmap.py)
+- functions referenced only through a code pointer (e.g. the unit
+  initialisation routines in the INITFINAL table) are declared as
+  functions: GOFF distinguishes code and data symbols, and the address of
+  a function stored in data must be a function descriptor
+- LLVM metadata parameters of intrinsics do not occupy an argument slot
+- weak external symbols are supported
+- get_frame is supported (LLVM frameaddress)
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/fpcdefs.inc          |   1 +
+ compiler/llvm/llvmdef.pas     |   6 +-
+ compiler/llvm/llvmtype.pas    |   9 +++
+ compiler/ngenutil.pas         |   2 +-
+ compiler/pmodules.pas         |   2 +-
+ compiler/s390x/cpupara.pas    |  17 ++++++
+ compiler/systems.pas          |   2 +-
+ compiler/systems/zosnames.pas | 110 ++++++++++++++++++++++++++++++++++
+ 8 files changed, 144 insertions(+), 5 deletions(-)
+ create mode 100644 compiler/systems/zosnames.pas
+
+diff --git a/compiler/fpcdefs.inc b/compiler/fpcdefs.inc
+index 266070ed..b3724969 100644
+--- a/compiler/fpcdefs.inc
++++ b/compiler/fpcdefs.inc
+@@ -430,6 +430,7 @@
+   {$define SUPPORT_SAFECALL}
+   { only the LLVM code generator is supported }
+   {$define NOOPT}
++  {$define SUPPORT_GET_FRAME}
+ {$endif s390x}
+ 
+ { Stabs is not officially supported on 64 bit targets by gdb, except on Mac OS X
+diff --git a/compiler/llvm/llvmdef.pas b/compiler/llvm/llvmdef.pas
+index d601da7c..ec619e43 100644
+--- a/compiler/llvm/llvmdef.pas
++++ b/compiler/llvm/llvmdef.pas
+@@ -120,7 +120,7 @@ implementation
+ 
+   uses
+     globals,cutils,constexp,
+-    verbose,systems,
++    verbose,systems,zosnames,
+     fmodule,
+     symtable,symsym,
+     llvmsym,hlcgobj,
+@@ -277,7 +277,9 @@ implementation
+          (copy(s,1,length('llvm.'))<>'llvm.') then
+         begin
+           if s[1]<>'"' then
+-            result:='@"'+s+'"'
++            { C library functions have different external names in ASCII
++              mode (#pragma map in the z/OS headers) }
++            result:='@"'+zos_external_name(s)+'"'
+           else
+             result:='@'+s;
+           exit;
+diff --git a/compiler/llvm/llvmtype.pas b/compiler/llvm/llvmtype.pas
+index 73858b96..2e108d3a 100644
+--- a/compiler/llvm/llvmtype.pas
++++ b/compiler/llvm/llvmtype.pas
+@@ -523,6 +523,15 @@ implementation
+           handling is centralised in one place. }
+         if not(asmsym.declared) then
+           begin
++            { z/OS (GOFF) distinguishes code and data symbols, and the address
++              of a function stored in data must be a function descriptor:
++              declare functions referenced only through a code pointer (e.g.
++              the unit initialisation routines in the INITFINAL table) as
++              functions }
++            if (target_info.system=system_s390x_zos) and
++               (asmsym.typ=AT_FUNCTION) and
++               (def.typ<>procdef) then
++              def:=search_system_proc('fpc_initializeunits');
+             if def.typ=procdef then
+               sec:=sec_code
+             else
+diff --git a/compiler/ngenutil.pas b/compiler/ngenutil.pas
+index ea959aa2..fc382ee2 100644
+--- a/compiler/ngenutil.pas
++++ b/compiler/ngenutil.pas
+@@ -1785,7 +1785,7 @@ implementation
+      begin
+        { stub for calling FPC_SYSTEMMAIN from the C main -> add argc/argv/argp }
+        if (tprocdef(pd).proctypeoption=potype_mainstub) and
+-          (target_info.system in (systems_darwin+[system_powerpc_macosclassic]+systems_aix)) then
++          (target_info.system in (systems_darwin+[system_powerpc_macosclassic,system_s390x_zos]+systems_aix)) then
+          begin
+            pvs:=cparavarsym.create('ARGC',1,vs_const,s32inttype,[]);
+            tprocdef(pd).parast.insertsym(pvs);
+diff --git a/compiler/pmodules.pas b/compiler/pmodules.pas
+index c67c8f9c..abdbec46 100644
+--- a/compiler/pmodules.pas
++++ b/compiler/pmodules.pas
+@@ -2682,7 +2682,7 @@     tfinishstate=record
+ 
+            cnodeutils.RegisterModuleInitFunction(initpd);
+          end
+-        else if (target_info.system in ([system_i386_netware,system_i386_netwlibc,system_powerpc_macosclassic]+systems_darwin+systems_aix)) then
++        else if (target_info.system in ([system_i386_netware,system_i386_netwlibc,system_powerpc_macosclassic,system_s390x_zos]+systems_darwin+systems_aix)) then
+           begin
+             { create a stub with the name of the desired main routine, with
+               the same signature as the C "main" function, and call through to
+diff --git a/compiler/s390x/cpupara.pas b/compiler/s390x/cpupara.pas
+index 856f2396..f72f868d 100644
+--- a/compiler/s390x/cpupara.pas
++++ b/compiler/s390x/cpupara.pas
+@@ -406,6 +406,23 @@       tcpuparamanager = class(tparamanager)
+         para.reset;
+         para.alignment:=std_param_align;
+ 
++{$ifdef llvm}
++        { LLVM metadata parameters of intrinsics are not real arguments and
++          must not occupy an argument slot }
++        if paradef=llvm_metadatatype then
++          begin
++            para.size:=OS_ADDR;
++            para.intsize:=sizeof(pint);
++            para.def:=paradef;
++            paraloc:=para.add_location;
++            paraloc^.loc:=LOC_REGISTER;
++            paraloc^.register:=NR_R1;
++            paraloc^.size:=OS_ADDR;
++            paraloc^.def:=paradef;
++            exit;
++          end;
++{$endif llvm}
++
+         if push_addr_param(varspez,paradef,p.proccalloption) then
+           begin
+             paradef:=cpointerdef.getreusable_no_free(paradef);
+diff --git a/compiler/systems.pas b/compiler/systems.pas
+index e26e00ce..bc9b0369 100644
+--- a/compiler/systems.pas
++++ b/compiler/systems.pas
+@@ -390,7 +390,7 @@     tabiinfo = record
+ 
+        { all systems for which weak linking has been tested/is supported }
+        systems_weak_linking = systems_darwin + systems_solaris + systems_linux + systems_android + systems_bsd +
+-                              [system_m68k_sinclairql];
++                              [system_m68k_sinclairql,system_s390x_zos];
+ 
+        systems_internal_sysinit = [system_i386_win32,system_x86_64_win64,
+                                    system_i386_linux,system_powerpc64_linux,system_sparc64_linux,system_x86_64_linux,
+diff --git a/compiler/systems/zosnames.pas b/compiler/systems/zosnames.pas
+new file mode 100644
+index 00000000..dcf632a7
+--- /dev/null
++++ b/compiler/systems/zosnames.pas
+@@ -0,0 +1,110 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    External names of z/OS C runtime library functions
++
++    The z/OS C headers give many C library functions a different external
++    name with "#pragma map", e.g. in ASCII mode fopen is called @@A00246.
++    Programs compiled in ASCII mode have to call these entry points.
++    The table is read from the file zosmap.txt (lines "<name> <external
++    name>", generated from the z/OS headers) found in the unit search path.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit zosnames;
++
++{$i fpcdefs.inc}
++
++interface
++
++  uses
++    globtype;
++
++  { returns the external name of the C library function s, or s itself }
++  function zos_external_name(const s: TSymStr): TSymStr;
++
++implementation
++
++  uses
++    SysUtils,cclasses,cutils,globals,verbose;
++
++  const
++    zosmapfilename = 'zosmap.txt';
++
++  var
++    zosmap: TFPHashList;
++    zosmaploaded: boolean;
++
++
++  procedure loadzosmap;
++    var
++      f: text;
++      fn: TCmdStr;
++      line: ansistring;
++      p: longint;
++      name, extname: TSymStr;
++    begin
++      zosmaploaded:=true;
++      zosmap:=TFPHashList.Create;
++      if not UnitSearchPath.FindFile(zosmapfilename,true,fn) and
++         not ObjectSearchPath.FindFile(zosmapfilename,true,fn) then
++        begin
++          Comment(V_Warning,'z/OS: '+zosmapfilename+' not found in the unit path, '+
++            'C library functions will be called by their plain names');
++          exit;
++        end;
++      assign(f,fn);
++      {$push}{$i-}
++      reset(f);
++      {$pop}
++      if ioresult<>0 then
++        begin
++          Comment(V_Warning,'z/OS: cannot read '+fn);
++          exit;
++        end;
++      while not eof(f) do
++        begin
++          readln(f,line);
++          line:=trim(line);
++          if (line='') or (line[1]='#') then
++            continue;
++          p:=pos(' ',line);
++          if p=0 then
++            continue;
++          name:=copy(line,1,p-1);
++          extname:=trim(copy(line,p+1,length(line)));
++          if zosmap.Find(name)=nil then
++            zosmap.Add(name,stringdup(extname));
++        end;
++      close(f);
++    end;
++
++
++  function zos_external_name(const s: TSymStr): TSymStr;
++    var
++      p: pshortstring;
++    begin
++      if not zosmaploaded then
++        loadzosmap;
++      p:=pshortstring(zosmap.Find(s));
++      if assigned(p) then
++        result:=p^
++      else
++        result:=s;
++    end;
++
++end.
+-- 
+2.43.0
+

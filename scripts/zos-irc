@@ -1,0 +1,28 @@
+#!/bin/sh
+# zos-irc: "clang"-Ersatz für FPC (Target zos): LLVM-IR -> GOFF mit llc.
+#
+# FPC ruft den LLVM-Assembler auf als
+#   clang -x ir <Optionen> -target <triple> -c -o <obj> <datei.ll> [...]
+# Das Skript übernimmt -O<n>, -o und die Eingabedatei und ruft
+#   [opt -O<n> |] llc -O<n> -mtriple=s390x-ibm-zos -filetype=obj
+# Grund: für den Pascal-Weg wird nur llc aus dem eigenen LLVM-Build gebraucht
+# (~/build/llvm-pascal, mit den z/OS-Korrekturen); ein opt daneben wird für
+# die IR-Optimierung benutzt, falls vorhanden.
+# Umgebung: ZOS_LLVM_BIN (Standard ~/build/llvm-pascal/bin).
+BIN=${ZOS_LLVM_BIN:-$HOME/build/llvm-pascal/bin}
+OLEVEL=0; OUT=""; IN=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -O0|-O1|-O2|-O3) OLEVEL=${1#-O} ;;
+    -o) OUT=$2; shift ;;
+    -x|-target) shift ;;
+    *.ll|*.bc) IN=$1 ;;
+  esac
+  shift
+done
+[ -n "$IN" ] && [ -n "$OUT" ] || { echo "zos-irc: Eingabe oder -o fehlt" >&2; exit 2; }
+if [ "$OLEVEL" != 0 ] && [ -x "$BIN/opt" ]; then
+  "$BIN/opt" -O"$OLEVEL" "$IN" | "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT"
+else
+  exec "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT" "$IN"
+fi

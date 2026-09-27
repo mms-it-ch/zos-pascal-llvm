@@ -1,0 +1,17 @@
+# GOFF-Objekte nie konvertieren – sonst unbrauchbar auf z/OS
+*.o   binary
+*.a   binary
+*.pas text eol=lf
+*.pp  text eol=lf
+*.inc text eol=lf
+*.ll  text eol=lf
+*.c   text eol=lf
+*.sh  text eol=lf
+*.py  text eol=lf
+*.jcl text eol=lf
+*.md  text eol=lf
+scripts/* text eol=lf
+fpc/patches/*.patch -text
+llvm/patches/*.patch -text
+*.out text eol=lf
+runtime/*.c text eol=lf
