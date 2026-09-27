@@ -1,0 +1,152 @@
+From 647986649ceaca5a5c636d6dcac1b244cbac0154 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 21:21:52 +0200
+Subject: [PATCH 18/21] compiler/zos: DLLs (library) export only the symbols in
+ "exports"
+
+- the target supports hidden symbols; the LLVM writer marks all global
+  symbols hidden on z/OS except the ones in the exports list of the module
+  (GOFF: SCOPE(LIBRARY) instead of SCOPE(EXPORT)), since the z/OS binder has
+  no export list like the version scripts of ld
+- LLVM writer: linkage and visibility of an alias come before "alias"
+- t_zos: a library is linked as sharedlibfilename (lib<name>.so)
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/agllvm.pas   | 39 +++++++++++++++++++++++++++++++-------
+ compiler/systems/i_zos.pas |  5 ++++-
+ compiler/systems/t_zos.pas | 10 ++++++++--
+ 3 files changed, 44 insertions(+), 10 deletions(-)
+
+diff --git a/compiler/llvm/agllvm.pas b/compiler/llvm/agllvm.pas
+index 0be46a11..f896605f 100644
+--- a/compiler/llvm/agllvm.pas
++++ b/compiler/llvm/agllvm.pas
+@@ -122,7 +122,7 @@ implementation
+       objcasm,
+       aasmcnst,symconst,symtype,symdef,symtable,
+       llvmbase,itllvm,llvmdef,
+-      cgbase,cgutils,cpubase,cpuinfo,triplet,llvminfo;
++      cgbase,cgutils,cpubase,cpuinfo,triplet,llvminfo,export;
+ 
+     const
+       line_length = 70;
+@@ -1037,7 +1037,29 @@        tdoubleval = record
+ 
+     procedure TLLVMAssember.WriteTai(const replaceforbidden: boolean; const do_line: boolean; inmetadatakind: tmetadatakind; var InlineLevel: cardinal; var asmblock: boolean; var hp: tai);
+ 
+-      procedure WriteLinkageVibilityFlags(bind: TAsmSymBind; is_definition: boolean);
++      { z/OS: only the symbols in "exports" are exported from a DLL; all other
++        global symbols are hidden (GOFF: SCOPE(LIBRARY), resolved within the
++        load module, but not exported). The binder has no export list like the
++        version scripts of ld on Linux. }
++      function zos_hidden_global(const name: TSymStr): boolean;
++        var
++          hp: texported_item;
++        begin
++          result:=false;
++          if target_info.system<>system_s390x_zos then
++            exit;
++          hp:=texported_item(current_module._exports.first);
++          while assigned(hp) do
++            begin
++              if assigned(hp.name) and (hp.name^=name) then
++                exit;
++              hp:=texported_item(hp.next);
++            end;
++          result:=true;
++        end;
++
++
++      procedure WriteLinkageVibilityFlags(bind: TAsmSymBind; is_definition: boolean; const name: TSymStr);
+         begin
+           { re-declaration of a symbol defined in the current module (in an
+             assembler block) }
+@@ -1056,7 +1078,8 @@        tdoubleval = record
+                writer.AsmWrite(' internal');
+              AB_GLOBAL,
+              AB_INDIRECT:
+-               ;
++               if zos_hidden_global(name) then
++                 writer.AsmWrite(' hidden');
+              AB_WEAK_EXTERNAL:
+                writer.AsmWrite(' extern_weak');
+              AB_PRIVATE_EXTERN:
+@@ -1423,7 +1446,7 @@        tdoubleval = record
+                       writer.AsmWrite('define');
+                       if ldf_weak in taillvmdecl(hp).flags then
+                         writer.AsmWrite(' weak');
+-                      WriteLinkageVibilityFlags(taillvmdecl(hp).namesym.bind, true);
++                      WriteLinkageVibilityFlags(taillvmdecl(hp).namesym.bind, true, taillvmdecl(hp).namesym.name);
+                       writer.AsmWrite(llvmencodeproctype(tprocdef(taillvmdecl(hp).def), '', lpd_def));
+                       WriteFunctionFlags(tprocdef(taillvmdecl(hp).def));
+                       if assigned(tprocdef(taillvmdecl(hp).def).personality) then
+@@ -1454,7 +1477,7 @@        tdoubleval = record
+                     writer.AsmWrite(' weak');
+                   if ldf_appending in taillvmdecl(hp).flags then
+                     writer.AsmWrite(' appending');
+-                  WriteLinkageVibilityFlags(taillvmdecl(hp).namesym.bind, ldf_definition in taillvmdecl(hp).flags);
++                  WriteLinkageVibilityFlags(taillvmdecl(hp).namesym.bind, ldf_definition in taillvmdecl(hp).flags, taillvmdecl(hp).namesym.name);
+                   writer.AsmWrite(' ');
+                   if (ldf_tls in taillvmdecl(hp).flags) then
+                     writer.AsmWrite('thread_local ');
+@@ -1528,8 +1551,10 @@        tdoubleval = record
+           ait_llvmalias:
+             begin
+               writer.AsmWrite(LlvmAsmSymName(taillvmalias(hp).newsym));
+-              writer.AsmWrite(' = alias ');
+-              WriteLinkageVibilityFlags(taillvmalias(hp).bind, true);
++              { linkage and visibility come before "alias" }
++              writer.AsmWrite(' =');
++              WriteLinkageVibilityFlags(taillvmalias(hp).bind, true, taillvmalias(hp).newsym.name);
++              writer.AsmWrite(' alias ');
+               if taillvmalias(hp).def.typ=procdef then
+                 sstr:=llvmencodeproctype(tabstractprocdef(taillvmalias(hp).def), '', lpd_alias)
+               else
+diff --git a/compiler/systems/i_zos.pas b/compiler/systems/i_zos.pas
+index de91d812..175dcba7 100644
+--- a/compiler/systems/i_zos.pas
++++ b/compiler/systems/i_zos.pas
+@@ -43,7 +43,10 @@
+             flags        : [tf_files_case_sensitive,
+                             tf_smartlink_sections,
+                             tf_safecall_exceptions,
+-                            tf_use_psabieh];
++                            tf_use_psabieh,
++                            { only the symbols in "exports" are exported from a
++                              DLL (GOFF: hidden = SCOPE(LIBRARY)) }
++                            tf_supports_hidden_symbols];
+             cpu          : cpu_s390x;
+             unit_env     : 'ZOSUNITS';
+             extradefines : 'UNIX;HASUNIX';
+diff --git a/compiler/systems/t_zos.pas b/compiler/systems/t_zos.pas
+index 7067f64b..843697b3 100644
+--- a/compiler/systems/t_zos.pas
++++ b/compiler/systems/t_zos.pas
+@@ -140,7 +140,10 @@ implementation
+       var
+         binstr, cmdstr, resname: TCmdStr;
+       begin
+-        resname:=outputexedir+ChangeFileExt(ExtractFileName(current_module.exefilename),'.zlink');
++        if isdll then
++          resname:=outputexedir+ChangeFileExt(ExtractFileName(current_module.sharedlibfilename),'.zlink')
++        else
++          resname:=outputexedir+ChangeFileExt(ExtractFileName(current_module.exefilename),'.zlink');
+         result:=WriteLinkList(resname,isdll);
+         if not result then
+           exit;
+@@ -148,7 +151,10 @@ implementation
+           SplitBinCmd(Info.DllCmd[1],binstr,cmdstr)
+         else
+           SplitBinCmd(Info.ExeCmd[1],binstr,cmdstr);
+-        Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
++        if isdll then
++          Replace(cmdstr,'$EXE',maybequoted(current_module.sharedlibfilename))
++        else
++          Replace(cmdstr,'$EXE',maybequoted(current_module.exefilename));
+         Replace(cmdstr,'$RES',maybequoted(resname));
+         Replace(cmdstr,'$OPT',Info.ExtraOptions);
+         binstr:=FindUtil(utilsprefix+binstr);
+-- 
+2.43.0
+

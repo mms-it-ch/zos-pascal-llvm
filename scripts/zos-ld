@@ -41,6 +41,13 @@ SSHOPT="-i $KEY -o BatchMode=yes"
 
 NAME=$(basename "$OUT")
 BDIR=$DIR/bind/$NAME.$$
+# Programm: Einstieg CELQSTRT (LE); DLL: kein Einstieg, dafür das Sidedeck <name>.x
+# (IMPORT-Anweisungen für Programme, die gegen die DLL gebunden werden)
+if [ "$KIND" = dll ]; then
+  ENTRY="-x $DIR/${NAME%.so}.x"
+else
+  ENTRY="-e CELQSTRT"
+fi
 # Arbeitsverzeichnis im Windows-Temp, weil sftp.exe die Datei lesen muss
 WTMP=$(wslpath -u "$(cmd.exe /c 'echo %TEMP%' 2>/dev/null | tr -d '\r')")
 TMP=$(mktemp -d "$WTMP/zos-ld.XXXXXX")
@@ -55,7 +62,7 @@ if [ -n "$RTLDIR" ] && [ -f "$RTLDIR/.zos-installed" ] && \
 fi
 
 # Objekte und Archive mit eindeutigen Namen sammeln
-objs=""; libs=""; n=0
+objs=""; libs=""; clibs=""; n=0
 while read -r kind path; do
   case "$kind" in
     obj|lib)
@@ -65,7 +72,7 @@ while read -r kind path; do
       n=$((n+1)); f=$(printf '%03d_%s' $n "$(basename "$path")")
       cp "$path" "$TMP/$f"
       if [ "$kind" = obj ]; then objs="$objs $f"; else libs="$libs $f"; fi ;;
-    clib) echo "zos-ld: Warnung: C-Bibliothek $path wird ignoriert (C-RTL kommt aus LE)" >&2 ;;
+    clib) clibs="$clibs $path" ;;
   esac
 done < "$LIST"
 [ $USELIB = 1 ] && libs="$libs $DIR/lib/libfpc.a"
@@ -73,7 +80,7 @@ done < "$LIST"
 # Übertragen (tar-Datei binär per sftp) und binden
 ( cd "$TMP" && tar --format=ustar -cf "$TMP.tar" . )
 printf -- '-mkdir %s/bind\nmkdir %s\nput %s %s/objs.tar\n' "$DIR" "$BDIR" "$(wslpath -m "$TMP.tar")" "$BDIR" |
-  $SFTP -q $SSHOPT -b - "$HOST" >/dev/null
+  $SFTP -q $SSHOPT -b - "$HOST" 2>&1 >/dev/null | grep -v "mkdir.*Failure" >&2 || true
 # Binden; Schutz: nicht binden, wenn im Dateisystem weniger als ZOS_MIN_FREE_KB
 # (Standard 60 MB) frei sind. Die Binderliste bleibt nur im Fehlerfall erhalten
 # (oder mit ZOS_KEEP_MAP=1).
@@ -86,11 +93,37 @@ if [ "\$free" -lt ${ZOS_MIN_FREE_KB:-61440} ]; then
   exit 1
 fi
 pax -rf objs.tar
+# Bibliotheken aus "external 'name'": Sidedeck einer DLL (lib<name>.x im Arbeits- oder
+# lib-Verzeichnis) mitbinden; sonst stammt die Bibliothek aus der LE (c, pthread, ...)
+sidedecks=""
+for c in $clibs; do
+  for x in $DIR/lib\$c.x $DIR/lib/lib\$c.x; do
+    if [ -f \$x ]; then sidedecks="\$sidedecks \$x"; break; fi
+  done
+done
+# ld hängt an ein vorhandenes Sidedeck an, statt es zu ersetzen
+[ "$KIND" = dll ] && rm -f $DIR/${NAME%.so}.x
 ld -b AMODE=64 -b CASE=MIXED -b DYNAM=DLL -b REUS=RENT -b MAP \
-   -e CELQSTRT -V $LDOPTS -o $DIR/$NAME $objs $libs \
+   $ENTRY -V $LDOPTS -o $DIR/$NAME $objs $libs \$sidedecks \
    -S "//'$LE.SCEEBND2'" \
    "//'$LE.SCEELIB(CELQS001)'" "//'$LE.SCEELIB(CELQS003)'" > $DIR/$NAME.map 2>&1
 rc=\$?
+# ZOS_PDS=MEMBER: zusätzlich als Programmobjekt in die PDSE ZOS_PASLIB (Batch, JCL)
+if [ \$rc -le 4 ] && [ -n "$ZOS_PDS" ] && [ "$KIND" = exe ]; then
+  ld -b AMODE=64 -b CASE=MIXED -b DYNAM=DLL -b REUS=RENT -b MAP \
+     $ENTRY -V $LDOPTS -o "//'$ZOS_PASLIB($ZOS_PDS)'" $objs $libs \$sidedecks \
+     -S "//'$LE.SCEEBND2'" \
+     "//'$LE.SCEELIB(CELQS001)'" "//'$LE.SCEELIB(CELQS003)'" > $DIR/$NAME-pds.map 2>&1
+  pdsrc=\$?
+  if [ \$pdsrc -gt 4 ]; then
+    echo "zos-ld: ld in die PDSE fehlgeschlagen:"
+    grep -E 'IEW2[0-9]+[ES]' $DIR/$NAME-pds.map | head -10
+    rc=\$pdsrc
+  else
+    echo "zos-ld: gebunden als PDSE-Member $ZOS_PDS" >&2
+    rm -f $DIR/$NAME-pds.map
+  fi
+fi
 cd $DIR && rm -rf $BDIR
 if [ \$rc -gt 4 ]; then
   echo 'zos-ld: ld fehlgeschlagen:'
@@ -100,6 +133,12 @@ fi
 [ "${ZOS_KEEP_MAP:-0}" = 1 ] || rm -f $NAME.map
 exit 0
 EOS
+
+# DLL: lokal nur ein Hinweis, wo sie liegt
+if [ "$KIND" = dll ]; then
+  printf 'z/OS-DLL: %s\nSidedeck: %s\n' "\$ZOS_DIR/$NAME" "\$ZOS_DIR/${NAME%.so}.x" > "$OUT"
+  exit 0
+fi
 
 # Lokales Start-Skript
 # (keine Zugangsdaten im Skript: sie werden beim Start aus .zos.env gelesen)
@@ -114,6 +153,12 @@ R=\$ZOS_DIR/run/$NAME.\$\$
 # Arbeitsverzeichnis (auch CEEDUMPs) wird nach dem Lauf gelöscht;
 # ZOS_RUN_ONCE=1 löscht auch das Programm (Testsuite)
 ONCE=""; [ "\$ZOS_RUN_ONCE" = 1 ] && ONCE="rm -f \$ZOS_DIR/$NAME;"
+# ZOS_RUN_CEEOPTS: LE-Laufzeitoptionen (_CEE_RUNOPTS), z. B. TERMTHDACT(MSG) in der Testsuite:
+# kein Traceback über einen zerstörten Stack (sonst U4083 und ein Systemdump)
+CEE=""; [ -n "\$ZOS_RUN_CEEOPTS" ] && CEE="export _CEE_RUNOPTS='\$ZOS_RUN_CEEOPTS';"
+# ZOS_RUN_DLLS=1: DLLs aus ZOS_DIR ins Arbeitsverzeichnis verlinken (Testsuite: Programme
+# laden ihre Bibliothek als ./lib<name>.so)
+DLLS=""; [ "\$ZOS_RUN_DLLS" = 1 ] && DLLS="for d in \$ZOS_DIR/lib*.so; do [ -f \\\$d ] && ln -s \\\$d .; done;"
 # ZOS_RUN_FILES: Dateien aus dem Verzeichnis dieses Skripts vorher ins Arbeitsverzeichnis
 # laden (Testsuite: %FILES, die dotest neben das Programm kopiert)
 if [ -n "\$ZOS_RUN_FILES" ]; then
@@ -122,6 +167,6 @@ if [ -n "\$ZOS_RUN_FILES" ]; then
     for f in \$ZOS_RUN_FILES; do [ -f "\$D/\$f" ] && echo "put \$(wslpath -m "\$D/\$f") \$R/\$f"; done
   } | ${SFTP} -q -i "\$ZOS_KEY" -o BatchMode=yes -b - "\$ZOS_HOST" >/dev/null
 fi
-exec ${SSH} -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
+exec ${SSH} -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$CEE \$DLLS export LIBPATH=\$ZOS_DIR:\$ZOS_DIR/lib:\\\$LIBPATH; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
 EOF
 chmod +x "$OUT"

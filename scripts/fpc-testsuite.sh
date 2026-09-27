@@ -26,6 +26,11 @@ done
 OUT=$T/output/s390x-zos
 # Testprogramme nach dem Lauf auf z/OS löschen (Platz im Dateisystem)
 export ZOS_RUN_ONCE=1
+# Abstürze ohne LE-Traceback beenden: ein Test, der den Stack zerstört (z. B. tb0662), führte
+# sonst beim Traceback zu U4083 RSN F und einem Systemdump-Dataset
+export ZOS_RUN_CEEOPTS=${ZOS_RUN_CEEOPTS:-TERMTHDACT(MSG)}
+# Bibliotheks-Tests laden ./lib<name>.so aus dem Arbeitsverzeichnis
+export ZOS_RUN_DLLS=1
 cd "$T" || exit 1
 
 if [ $SUMMARY_ONLY = 0 ]; then

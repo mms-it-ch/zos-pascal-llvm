@@ -1,7 +1,7 @@
 From ac7967f33985aa53a11bd9c21178c8b04732b670 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 12:32:24 +0200
-Subject: [PATCH 02/17] compiler: add the s390x CPU and the z/OS target (LLVM
+Subject: [PATCH 02/21] compiler: add the s390x CPU and the z/OS target (LLVM
  code generator only)
 
 New CPU s390x (z/Architecture) and target system_s390x_zos: 64 bit z/OS

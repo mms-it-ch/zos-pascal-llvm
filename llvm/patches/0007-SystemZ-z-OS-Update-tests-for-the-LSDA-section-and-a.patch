@@ -1,7 +1,7 @@
 From e46cb382c3380c05f4530aac1907803f618df256 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 17:02:54 +0200
-Subject: [PATCH 7/8] [SystemZ][z/OS] Update tests for the LSDA section and
+Subject: [PATCH 7/9] [SystemZ][z/OS] Update tests for the LSDA section and
  alias ADA changes
 
 The LSDA is now a section definition of its own in C_WSA64

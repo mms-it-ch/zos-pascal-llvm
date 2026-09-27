@@ -14,7 +14,7 @@ Pascal ──FPC (Port s390x/zos, nur LLVM-Backend)──▶ LLVM-IR ──llc (
 - **RTL:** `rtl/zos` (libc-basiert wie AIX, Werte auf z/OS gemessen) + `rtl/s390x` (ohne Assembler),
   kleine C-Laufzeit des Ports in `runtime/`: eigener XPLINK-Unwinder (`zosunwind.c`) für die
   LLVM-Exceptions, atomare Operationen.
-- **Backend:** eigener LLVM-Zweig (`llvm/`, LLVM 23.1.2 mit z/OS-Korrekturen, +8 Patches).
+- **Backend:** eigener LLVM-Zweig (`llvm/`, LLVM 23.1.2 mit z/OS-Korrekturen, +10 Patches).
 - **Laufzeitmodell:** ASCII-Modus, POSIX(ON), AMODE 64, XPLINK-64, LE. C-Funktionen über die
   ASCII-Einstiege (`zosmap.txt`, aus den z/OS-Headern erzeugt).
 
@@ -26,7 +26,7 @@ Pascal ──FPC (Port s390x/zos, nur LLVM-Backend)──▶ LLVM-IR ──llc (
 | PF1 | echte `system`-Unit: writeln, Strings, Heap, Textdateien, halt | erreicht 27.09.2026 (`pf1/pf1test.pas`: 17/17) |
 | PF2 | Exceptions (eigener XPLINK-Unwinder), Basis-RTL (sysutils, classes, math, strutils, dateutils, fgl, …) | **erreicht 27.09.2026** (`pf2/`: exctest 7/7, objtest 26/26) |
 | PF3 | FPC-Testsuite auf z/OS | tbs 772, tbf 317, webtbf 549, test 2025, webtbs 2696 (Referenz x86_64: 777, 318, 547, 2039, 2696) |
-| PF4 | Interop Pascal ↔ C, DLL, Batch/JCL, PDSE | offen |
+| PF4 | Interop Pascal ↔ C, DLL, Batch/JCL, PDSE | **erreicht 27.09.2026** (`pf4/`: Pascal-DLL implizit/dynamisch, Ausnahmen über die DLL-Grenze, Programm in PDSE als Batch-Job) |
 
 ## Benutzung (WSL)
 
@@ -49,6 +49,7 @@ Start-Skript). Zugangsdaten: `.zos.env` im Repo (nicht versioniert).
 | `scripts/zos-irc` | „clang“ für FPC: LLVM-IR → GOFF (llc, ggf. opt) |
 | `scripts/zos-ld` | „Linker“ für FPC: Upload + `ld` auf z/OS + Start-Skript |
 | `scripts/zos-sh` | Befehl in der z/OS-UNIX-Shell ausführen |
+| `scripts/zos-batch.sh [-n] MEMBER [PARM]` | Programm aus der PDSE (`ZOS_PDS=MEMBER zfpc …`) als Batch-Job ausführen |
 | `scripts/gen-zosmap.py` | C-Name → ASCII-Einstieg aus den z/OS-Headern |
 | `scripts/gen-errno.py` | `rtl/zos/errno.inc` aus `errno.h` |
 | `pf1/probe/zosprobe.c` | misst Typen, Layouts, Konstanten auf z/OS (Pascal-Ausgabe) |

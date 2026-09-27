@@ -1,0 +1,100 @@
+From 8ee5ec7738f781af50ba4cabf8987a6be6eb48db Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 22:02:14 +0200
+Subject: [PATCH] [SystemZ][z/OS] Keep weak references weak
+
+An extern_weak function whose address is taken is referenced through the
+indirect symbol <name>@indirect. This symbol was always a strong
+reference, so the binder failed when the function did not exist
+(IEW2456E). An external data reference is written as a part reference
+(PR), which had no binding strength at all.
+
+The indirect symbol now becomes a weak reference if the function symbol
+is weak, and part references carry the binding strength of the symbol.
+The binder then leaves both unresolved (address 0), as on other targets.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ llvm/include/llvm/MC/MCGOFFAttributes.h       |  1 +
+ llvm/lib/MC/GOFFObjectWriter.cpp              |  3 ++-
+ llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp |  4 ++++
+ llvm/test/CodeGen/SystemZ/zos-extern-weak.ll  | 19 +++++++++++++++++++
+ 4 files changed, 26 insertions(+), 1 deletion(-)
+ create mode 100644 llvm/test/CodeGen/SystemZ/zos-extern-weak.ll
+
+diff --git a/llvm/include/llvm/MC/MCGOFFAttributes.h b/llvm/include/llvm/MC/MCGOFFAttributes.h
+index 289d962e9..eb2abd4cf 100644
+--- a/llvm/include/llvm/MC/MCGOFFAttributes.h
++++ b/llvm/include/llvm/MC/MCGOFFAttributes.h
+@@ -77,6 +77,7 @@ struct PRAttr {
+   GOFF::ESDLinkageType Linkage = GOFF::ESD_LT_XPLink;
+   GOFF::ESDBindingScope BindingScope = GOFF::ESD_BSC_Unspecified;
+   uint32_t SortKey = 0;
++  GOFF::ESDBindingStrength BindingStrength = GOFF::ESD_BST_Strong;
+ };
+ 
+ // Attributes for ER symbols.
+diff --git a/llvm/lib/MC/GOFFObjectWriter.cpp b/llvm/lib/MC/GOFFObjectWriter.cpp
+index 47055d3fb..467fb4068 100644
+--- a/llvm/lib/MC/GOFFObjectWriter.cpp
++++ b/llvm/lib/MC/GOFFObjectWriter.cpp
+@@ -265,6 +265,7 @@ public:
+         SymbolType(GOFF::ESD_ST_PartReference), NameSpace(EDAttr.NameSpace) {
+     SymbolFlags.setRenameable(Attr.IsRenamable);
+     BehavAttrs.setExecutable(Attr.Executable);
++    BehavAttrs.setBindingStrength(Attr.BindingStrength);
+     BehavAttrs.setLinkageType(Attr.Linkage);
+     BehavAttrs.setBindingScope(Attr.BindingScope);
+     BehavAttrs.setAlignment(Alignment);
+@@ -369,7 +370,7 @@ void GOFFWriter::defineExtern(const MCSymbolGOFF &Symbol) {
+                   ED->getEDAttributes(), ED->getEDAlignment(),
+                   GOFF::PRAttr{/*IsRenamable*/ false, Symbol.getCodeData(),
+                                Symbol.getLinkage(), Symbol.getBindingScope(),
+-                               0});
++                               0, Symbol.getBindingStrength()});
+     writeSymbol(PR);
+   } else {
+     GOFFSymbol ER(Symbol.getExternalName(), Symbol.getIndex(),
+diff --git a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
+index b115b6c10..cd78ca545 100644
+--- a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
++++ b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
+@@ -1420,6 +1420,10 @@ void SystemZAsmPrinter::emitADASection() {
+       OutStreamer->emitSymbolAttribute(Alias, MCSA_Extern);
+       MCSymbolGOFF *GOFFSym =
+           static_cast<llvm::MCSymbolGOFF *>(const_cast<llvm::MCSymbol *>(Sym));
++      // A weak reference (extern_weak) stays weak through the indirect
++      // symbol, otherwise the binder fails on the unresolved reference.
++      if (GOFFSym->isWeak())
++        OutStreamer->emitSymbolAttribute(Alias, MCSA_WeakReference);
+       ZOS->emitExternalName(Alias, GOFFSym->getExternalName());
+       EMIT_COMMENT("pointer to function descriptor");
+       OutStreamer->emitValue(
+diff --git a/llvm/test/CodeGen/SystemZ/zos-extern-weak.ll b/llvm/test/CodeGen/SystemZ/zos-extern-weak.ll
+new file mode 100644
+index 000000000..5163185d8
+--- /dev/null
++++ b/llvm/test/CodeGen/SystemZ/zos-extern-weak.ll
+@@ -0,0 +1,19 @@
++; A weak reference to a function stays weak through the indirect symbol used
++; to take its address; otherwise the binder fails when the function does not
++; exist.
++; RUN: llc < %s -mtriple=s390x-ibm-zos | FileCheck %s
++
++; CHECK-DAG: WXTRN wf@indirect
++; CHECK-DAG: WXTRN wf{{ *$}}
++; CHECK-NOT: {{^ EXTRN wf}}
++
++declare extern_weak void @wf()
++
++define ptr @getf() {
++  ret ptr @wf
++}
++
++define void @callf() {
++  call void @wf()
++  ret void
++}
+-- 
+2.43.0
+

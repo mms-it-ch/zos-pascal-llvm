@@ -58,14 +58,19 @@ void FPC_ZOS_SIGREDIRECT(void *ucontext, void *fn, long err)
                      (unsigned long long)get(m, MC_GPR + 32),
                      (unsigned long long)get(m, MC_GPR + 40), (unsigned long long)get(m, MC_GPR + 48));
     write(2, b, n);
-    /* Namen nur für Adressen im Code des Programms (EPM-Suche liest rückwärts) */
-    uint64_t self = (uint64_t)((const uint64_t *)(void *)FPC_ZOS_SIGREDIRECT)[1];
-    if (pc > 0x1000000 && pc - self + (64u << 20) < (128u << 20))
-      FPC_ZOS_FUNC_NAME(pc, f1, sizeof f1);
-    if (orig_r7 > 0x1000000 && orig_r7 - self + (64u << 20) < (128u << 20))
-      FPC_ZOS_FUNC_NAME(orig_r7 + 2, f2, sizeof f2);
-    n = snprintf(b, sizeof b, "zossig: pc in %s, R7 in %s\n", f1, f2);
-    write(2, b, n);
+    /* Namen aus dem PPA1 (EPM-Suche liest rückwärts). Ein Fehler dabei (Adresse
+     * nicht im Code) käme als neues Signal hier an: dann ohne Namen weiter. */
+    static volatile int in_lookup = 0;
+    if (!in_lookup) {
+      in_lookup = 1;
+      if (pc > 0x1000000 && !(pc & 1))
+        FPC_ZOS_FUNC_NAME(pc, f1, sizeof f1);
+      if (orig_r7 > 0x1000000)
+        FPC_ZOS_FUNC_NAME(orig_r7 + 2, f2, sizeof f2);
+      in_lookup = 0;
+      n = snprintf(b, sizeof b, "zossig: pc in %s, R7 in %s\n", f1, f2);
+      write(2, b, n);
+    }
   }
   /* Kehrt der Handler normal zurück, beendet LE das Programm bei einer
    * Programmunterbrechung trotzdem (CEE3224S) -> Kontext selbst laden. */

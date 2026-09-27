@@ -159,6 +159,24 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
 - **safecall (FPC-Patch 0011):** allgemeiner Fehler im FPC-LLVM-Pfad: `sret` + HRESULT-Ergebnis,
   falsche Erweiterung in der Deklaration, HRESULT per Speicher kopiert (Big-Endian: falsche Hälfte).
 
+- **PF4 erreicht (27.09.2026), Details `pf4/README.md`:** Pascal-DLL (`library`) mit
+  Sidedeck (`zos-ld dll`: `-x <name>.x`, altes Sidedeck vorher löschen, ld hängt sonst an),
+  `external 'x'` bindet `libx.x` mit, LIBPATH im Start-Skript. Nur `exports` wird exportiert
+  (FPC-Patch 0018: sonst `hidden` = SCOPE(LIBRARY)). S0C1 in LE `cxxctor` beim Laden der DLL:
+  LLVM-Patch 0002 verteilte die `.xtor`-Einträge auf mehrere gleichnamige Teile → Patch 0009.
+  Unwinder erkennt main über `FPC_SYSTEMMAIN` (schwaches `main` war in DLLs unaufgelöst).
+  PDSE `ZOS_PASLIB` (`.zos.env`), `ZOS_PDS=MEMBER zfpc`, Batch per `scripts/zos-batch.sh`.
+  **Im Batch (JCL, POSIX(ON)) sind fd 0/1/2 geschlossen**, nur C-Streams gehen an die DDs →
+  FPC-Patch 0019: `FPC_ZOS_BATCH_STDIO` öffnet DD:STDIN/STDOUT/STDERR und legt sie per dup2
+  auf 0/1/2. JCL-Zeilen ≤ 71 Spalten (PATHOPTS umbrechen), BPXBATCH mit STDPARM statt PARM.
+- **Library-Tests (27.09.2026):** 13/14 laufen (tlib1b: DWARF-Zeileninfo). FPC-Patch 0020 (dladdr
+  auf z/OS nur LE-Stub → CEE3728S), 0021 (weakexternal → `extern_weak`), LLVM-Patch 0010 (weak
+  über `@indirect` und Daten-PR). Startskript: `ZOS_RUN_DLLS`, `ZOS_RUN_CEEOPTS`.
+- **Vorsicht Dumps:** Abstürze mit zerstörtem Stack (tb0662 u. a.) enden beim LE-Traceback mit
+  U4083 RSN F und je einem Transaction-Dump-Dataset unter der User-ID (DYNDUMP ist NODYNAMIC,
+  hilft nicht). Die Testsuite läuft deshalb mit `TERMTHDACT(MSG)` (`ZOS_RUN_CEEOPTS`); vor
+  Testläufen mit bekannten Abstürzen daran denken.
+
 ## Nächste Schritte
 1. PF3: FPC-Testsuite (`~/src/fpc/tests`) auf z/OS. **tbs (27.09.2026): 772/784 ok, Referenz
    x86_64-linux 777/784.** Nur z/OS: 5 × Inline-Assembler (LLVM-Ziel ohne Assembler-Leser),
@@ -170,7 +188,7 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    gehen verloren). Referenz-Wrapper ohne `-FU` (sonst Unit-Tests „Failed to run“, Exit 2000).
    z/OS-Platz: ZPAS-ZFS 360 MB; zos-ld bindet erst ab 60 MB frei (`ZOS_MIN_FREE_KB`).
 2. Offene TODOs: C-ABI Record-Ergebnis anderer Größen und complex-like Records, Backtraces
-   (get_caller_addr), DLL/PDSE/Batch (PF4; tb0582 = library).
+   (get_caller_addr). PF4 erledigt (auch die Library-Tests der Testsuite).
 
 ## Arbeitsweise
 - **JCL: JOB-Karte immer mit `REGION=0M,LINES=500000`.**

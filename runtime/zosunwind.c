@@ -229,12 +229,14 @@ static int step(struct _Unwind_Context *c)
   return 1;
 }
 
-/* Hauptprogramm-Stub (von FPC erzeugt): dort endet die Suche. */
-extern int main(int, char **, char **) __attribute__((weak));
+/* FPC_SYSTEMMAIN (System-Unit, vom main-Stub des Programms gerufen): dort endet
+ * die Suche. Nicht main selbst: eine DLL hat kein main, und eine schwache
+ * Referenz darauf bleibt beim Binden der DLL als unaufgelöst stehen. */
+extern void FPC_SYSTEMMAIN(int, char **, char **);
 
 static int is_main(const struct _Unwind_Context *c)
 {
-  return main != 0 && c->entry == ((uint64_t *)(void *)main)[1];
+  return c->entry == ((uint64_t *)(void *)FPC_SYSTEMMAIN)[1];
 }
 
 /* Kontext für den Aufrufer der Funktion fn aufbauen; fn ist die gerade

@@ -1,7 +1,7 @@
 From 72f2edf2b21bed19eea4df0e637612f8ab211eb7 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 17:02:54 +0200
-Subject: [PATCH 8/8] [SystemZ][z/OS] Use the same function descriptor in
+Subject: [PATCH 8/9] [SystemZ][z/OS] Use the same function descriptor in
  initializers as in code
 
 Code takes the address of a function with external linkage from an ADA

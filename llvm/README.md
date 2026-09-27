@@ -18,6 +18,8 @@ Eigener Zweig `pascal-zos` (Worktree `~/src/llvm-pascal`) auf dem Zweig `zos-fix
 | 0006 | Globale Variablen der Größe 0 bekommen 1 Byte (PR-Länge 0 = Referenz → unaufgelöst) | eigen, gemeldet: llvm/llvm-project#226800 |
 | 0007 | Lit-Tests an 0003/0004 angepasst (zos-eh, zos-landingpad, zos-func-alias) | eigen |
 | 0008 | Funktionszeiger in statischen Initialisierern: derselbe Deskriptor wie im Code (`VD(f@indirect)` für nicht-interne Funktionen), sonst sind `pf == f` falsch | eigen, als Kommentar zu PR llvm/llvm-project#226682 gemeldet |
+| 0009 | Statische Initialisierer (C_@@SQINIT/`.xtor`): Klasse und Teile gemeinsam, alle Einträge eines Moduls in einem Teil (sonst S0C1 in LE `cxxctor` beim Laden einer DLL); Test `zos-xtor-one-part.ll` | eigen, Folge von 0002 (nicht upstream) |
+| 0010 | Schwache Referenzen (`extern_weak`) bleiben schwach: `<f>@indirect` übernimmt „weak“, PR-Referenzen (externe Daten) bekommen die Bindungsstärke (sonst IEW2456E bei fehlendem Symbol); Test `zos-extern-weak.ll` | eigen |
 
 Upstream gemeldet (27.09.2026): 0003 → #226804, 0004 → #226799, 0006 → #226800, 0008 → Kommentar zu PR #226682.
 0008 ergänzt die Basis-Korrektur „function descriptor for external functions in initializers“
@@ -25,7 +27,7 @@ Upstream gemeldet (27.09.2026): 0003 → #226804, 0004 → #226799, 0006 → #22
 aus Initialisierern aufrufbar, aber für externe Funktionen nicht gleich der im Code
 genommenen Adresse (C-Test: `void f(void){} void (*pf)(void)=f;` → `pf != f`).
 
-SystemZ- und GOFF-Lit-Tests (27.09.2026): 1279/1279 bestanden.
+SystemZ- und GOFF-Lit-Tests (27.09.2026): 1281/1281 bestanden (mit 0009, 0010).
 
 ## Schnell-Build (nur noch bei Bedarf)
 

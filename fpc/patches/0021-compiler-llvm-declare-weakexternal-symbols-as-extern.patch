@@ -1,0 +1,46 @@
+From d7c2ef718396258709581cfee5e70a7987d6e1ff Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 22:07:59 +0200
+Subject: [PATCH 21/21] compiler/llvm: declare weakexternal symbols as
+ extern_weak
+
+Declarations of functions and variables were always written as plain
+"declare" or "external", also for weakexternal symbols. LLVM then
+emitted strong references, and linking failed if the symbol did not
+exist (e.g. test/tweaklib2 on z/OS). Write extern_weak for symbols bound
+as AB_WEAK_EXTERNAL.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/agllvm.pas | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/compiler/llvm/agllvm.pas b/compiler/llvm/agllvm.pas
+index f896605f..6ebc4305 100644
+--- a/compiler/llvm/agllvm.pas
++++ b/compiler/llvm/agllvm.pas
+@@ -1065,7 +1065,11 @@        tdoubleval = record
+             assembler block) }
+           if not is_definition then
+             begin
+-              writer.AsmWrite(' external');
++              { weakexternal: the symbol may not exist at run time }
++              if bind=AB_WEAK_EXTERNAL then
++                writer.AsmWrite(' extern_weak')
++              else
++                writer.AsmWrite(' external');
+               exit;
+             end;
+           case bind of
+@@ -1437,6 +1441,8 @@        tdoubleval = record
+                   if not(ldf_definition in taillvmdecl(hp).flags) then
+                     begin
+                       writer.AsmWrite('declare');
++                      if taillvmdecl(hp).namesym.bind=AB_WEAK_EXTERNAL then
++                        writer.AsmWrite(' extern_weak');
+                       writer.AsmWrite(llvmencodeproctype(tprocdef(taillvmdecl(hp).def), taillvmdecl(hp).namesym.name, lpd_decl));
+                       WriteFunctionFlags(tprocdef(taillvmdecl(hp).def));
+                       writer.AsmLn;
+-- 
+2.43.0
+

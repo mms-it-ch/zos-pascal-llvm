@@ -1,7 +1,7 @@
 From 525327182cfdb58e90f3d5068e4fd83cabf6367d Mon Sep 17 00:00:00 2001
 From: Kai Nacke <kai.peter.nacke@ibm.com>
 Date: Thu, 10 Sep 2026 09:46:16 -0400
-Subject: [PATCH 1/8] [SystemZ][z/OS] Relax check for additional symbols in PR
+Subject: [PATCH 1/9] [SystemZ][z/OS] Relax check for additional symbols in PR
  section (#222435)
 
 The current check in `emitLabel()` is too strict. Inside a PR, there

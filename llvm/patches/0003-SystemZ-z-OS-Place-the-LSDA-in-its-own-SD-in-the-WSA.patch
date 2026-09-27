@@ -1,7 +1,7 @@
 From f5cf797ec373712011f098065d4d919e70463396 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 13:28:15 +0200
-Subject: [PATCH 3/8] [SystemZ][z/OS] Place the LSDA in its own SD in the WSA
+Subject: [PATCH 3/9] [SystemZ][z/OS] Place the LSDA in its own SD in the WSA
 
 The binder rejects objects with an exception table (LSDA), because the
 LSDA is a renamable PR in a C_WSA64 ED (with initial load) of the root

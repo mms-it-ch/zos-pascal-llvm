@@ -1,7 +1,7 @@
 From 5bc15dea1afb9cc686e9ddbee94b6dfd09466fa1 Mon Sep 17 00:00:00 2001
 From: Kai Nacke <kai.peter.nacke@ibm.com>
 Date: Thu, 10 Sep 2026 10:52:32 -0400
-Subject: [PATCH 5/8] [SystemZ][z/OS] Fix "relative immediate relocation
+Subject: [PATCH 5/9] [SystemZ][z/OS] Fix "relative immediate relocation
  section mismatch" (#222437)
 
 Constants should go inside the text section, but this is not explicitly

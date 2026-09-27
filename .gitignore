@@ -8,3 +8,11 @@ __pycache__/
 *.ppu
 *.zlink
 ppas.sh
+# Übersetzungsergebnisse in den Testverzeichnissen: GOFF-Objekte, DLL-Hinweise und die
+# Startskripte der Programme (Dateien ohne Endung)
+pf*/**/*
+!pf*/**/*.*
+!pf*/**/
+pf*/**/*.o
+pf*/**/*.so
+pf*/**/*.zlink

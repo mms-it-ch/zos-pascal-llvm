@@ -1,0 +1,94 @@
+From 129ed79db9ed573333dc346c4843892eb44f7ce0 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 27 Sep 2026 21:21:50 +0200
+Subject: [PATCH 9/9] [SystemZ][z/OS] Keep the static initializer entries in
+ one part
+
+With section definitions no longer cached (d57c6109f), every constructor
+and destructor entry of a module got a part .xtor of its own in the class
+C_@@SQINIT. Language Environment does not find the entries of a second
+part with the same name: loading a DLL with a constructor and a
+destructor branched to a wrong address in cxxctor (0C1). Share the class
+C_@@SQINIT and its parts again.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ llvm/lib/MC/MCContext.cpp                     | 24 ++++++++++++++--
+ .../test/CodeGen/SystemZ/zos-xtor-one-part.ll | 28 +++++++++++++++++++
+ 2 files changed, 49 insertions(+), 3 deletions(-)
+ create mode 100644 llvm/test/CodeGen/SystemZ/zos-xtor-one-part.ll
+
+diff --git a/llvm/lib/MC/MCContext.cpp b/llvm/lib/MC/MCContext.cpp
+index 297493ecc..88eb25e79 100644
+--- a/llvm/lib/MC/MCContext.cpp
++++ b/llvm/lib/MC/MCContext.cpp
+@@ -730,11 +730,29 @@ MCSectionGOFF *MCContext::getGOFFSection(SectionKind Kind, StringRef Name,
+   // the same SD (otherwise the binder reports "invalid data"). The map only
+   // keeps the names alive; the key is made unique with a counter.
+   // (Adapted from llvm/llvm-project#225157 without changing MCContext.h.)
++  //
++  // Exception: the static initializer class C_@@SQINIT and its parts (.xtor)
++  // must be shared, all constructor and destructor entries of a module go into
++  // one part. Language Environment does not find the entries of a second part
++  // with the same name, and calls a wrong address when a DLL is loaded.
+   std::string UniqueName(Name);
+-  UniqueName.append("\x01").append(std::to_string(GOFFUniquingMap.size()));
++  bool Shared =
++      Name == GOFF::CLASS_SINIT ||
++      (Parent && static_cast<MCSectionGOFF *>(Parent)->getName() ==
++                     GOFF::CLASS_SINIT);
++  if (Shared) {
++    if (Parent) {
++      UniqueName.append("/").append(Parent->getName());
++      if (auto *P = static_cast<MCSectionGOFF *>(Parent)->getParent())
++        UniqueName.append("/").append(P->getName());
++    }
++  } else
++    UniqueName.append("\x01").append(std::to_string(GOFFUniquingMap.size()));
+   auto [Iter, Inserted] = GOFFUniquingMap.try_emplace(UniqueName);
+-  assert(Inserted && "GOFF section key not unique");
+-  (void)Inserted;
++  if (!Inserted) {
++    assert(Shared && "GOFF section key not unique");
++    return Iter->second;
++  }
+ 
+   StringRef CachedName = StringRef(Iter->first.c_str(), Name.size());
+   MCSectionGOFF *GOFFSection = new (GOFFAllocator.Allocate())
+diff --git a/llvm/test/CodeGen/SystemZ/zos-xtor-one-part.ll b/llvm/test/CodeGen/SystemZ/zos-xtor-one-part.ll
+new file mode 100644
+index 000000000..7500efa10
+--- /dev/null
++++ b/llvm/test/CodeGen/SystemZ/zos-xtor-one-part.ll
+@@ -0,0 +1,28 @@
++; All constructor and destructor entries of a module must be in one part of
++; the class C_@@SQINIT; Language Environment does not find the entries of a
++; second part with the same name.
++;
++; RUN: llc < %s -mtriple=s390x-ibm-zos | FileCheck %s
++
++; CHECK: C_@@SQINIT CATTR
++; CHECK-NEXT: {{.*}}PART(.xtor)
++; CHECK-NEXT: .xtor XATTR
++; CHECK-NEXT: DS 0B
++; CHECK-NEXT: DC XL4'80000000'
++; CHECK-NEXT: DC AD(QD({{.*}}#S)+XL8'0')
++; CHECK-NEXT: DC XL8'0000000000000000'
++; CHECK-NEXT: DC XL4'80000000'
++; CHECK-NEXT: DC XL8'0000000000000000'
++; CHECK-NEXT: DC AD(QD({{.*}}#S)+XL8'16')
++; CHECK-NOT: PART(.xtor)
++
++@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @init, ptr null }]
++@llvm.global_dtors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @fini, ptr null }]
++
++define internal void @init() {
++  ret void
++}
++
++define internal void @fini() {
++  ret void
++}
+-- 
+2.43.0
+
