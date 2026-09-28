@@ -1,0 +1,25 @@
+{
+  // Debuggen mit der Erweiterung "z/OS Pascal" (vscode/): die geöffnete Pascal-Datei
+  // ist das Hauptprogramm.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "zos-pascal",
+      "request": "launch",
+      "name": "Pascal auf z/OS",
+      "target": "zos",
+      "program": "${file}",
+      "args": [],
+      "stopAtEntry": true
+    },
+    {
+      "type": "zos-pascal",
+      "request": "launch",
+      "name": "Pascal lokal (gdb)",
+      "target": "local",
+      "program": "${file}",
+      "args": [],
+      "stopAtEntry": false
+    }
+  ]
+}
