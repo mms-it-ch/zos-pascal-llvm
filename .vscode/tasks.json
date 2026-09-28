@@ -1,0 +1,94 @@
+{
+  // Tasks für z/OS (Terminal > Task ausführen; Strg+Umschalt+B = übersetzen).
+  // Alles läuft in WSL; Zugang zu z/OS aus .zos.env (ssh) bzw. ~/.netrc in WSL (FTP/JES).
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${fileDirname}"
+  },
+  "presentation": {
+    "reveal": "always",
+    "panel": "shared",
+    "clear": true
+  },
+  "tasks": [
+    {
+      "label": "z/OS: übersetzen und binden",
+      "detail": "zfpc -gl <Datei>: LLVM -> GOFF, Binden auf z/OS (USS-Programm)",
+      "type": "process",
+      "command": "wsl",
+      "args": ["--cd", "${fileDirname}", "-e", "bash", "-lc",
+               "\"$(wslpath '${workspaceFolder}')/scripts/zfpc\" -gl '${fileBasename}'"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": {
+        "owner": "fpc",
+        "fileLocation": ["relative", "${fileDirname}"],
+        "pattern": {
+          "regexp": "^(.+?)\\((\\d+),(\\d+)\\)\\s+(Fatal|Error|Warning|Note|Hint):\\s+(.*)$",
+          "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
+        }
+      }
+    },
+    {
+      "label": "z/OS: übersetzen und ausführen",
+      "detail": "zfpc -gl, dann das Programm auf z/OS starten (Argumente abgefragt)",
+      "type": "process",
+      "command": "wsl",
+      "args": ["--cd", "${fileDirname}", "-e", "bash", "-lc",
+               "\"$(wslpath '${workspaceFolder}')/scripts/zfpc\" -gl '${fileBasename}' && ./'${fileBasenameNoExtension}' ${input:args}"],
+      "problemMatcher": {
+        "owner": "fpc",
+        "fileLocation": ["relative", "${fileDirname}"],
+        "pattern": {
+          "regexp": "^(.+?)\\((\\d+),(\\d+)\\)\\s+(Fatal|Error|Warning|Note|Hint):\\s+(.*)$",
+          "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
+        }
+      }
+    },
+    {
+      "label": "z/OS: Batch-Job (PDSE, FTP/JES)",
+      "detail": "in die PDSE binden (ZOS_PDS), JCL erzeugen und über FTP/JES einreichen",
+      "type": "process",
+      "command": "wsl",
+      "args": ["--cd", "${fileDirname}", "-e", "bash", "-lc",
+               "R=\"$(wslpath '${workspaceFolder}')\"; ZOS_PDS='${input:member}' \"$R/scripts/zfpc\" -gl '${fileBasename}' && sh \"$R/scripts/zos-batch.sh\" -n '${input:member}' ${input:args} | python3 \"$R/scripts/zos-jes.py\" -"],
+      "problemMatcher": {
+        "owner": "fpc",
+        "fileLocation": ["relative", "${fileDirname}"],
+        "pattern": {
+          "regexp": "^(.+?)\\((\\d+),(\\d+)\\)\\s+(Fatal|Error|Warning|Note|Hint):\\s+(.*)$",
+          "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
+        }
+      }
+    },
+    {
+      "label": "z/OS: JCL einreichen (FTP/JES)",
+      "detail": "die geöffnete JCL-Datei einreichen, warten, Spool nach jes-output/ holen",
+      "type": "process",
+      "command": "wsl",
+      "args": ["--cd", "${fileDirname}", "-e", "bash", "-lc",
+               "python3 \"$(wslpath '${workspaceFolder}')/scripts/zos-jes.py\" '${fileBasename}'"],
+      "problemMatcher": []
+    },
+    {
+      "label": "z/OS: eigene Jobs (FTP/JES)",
+      "type": "process",
+      "command": "wsl",
+      "args": ["--cd", "${workspaceFolder}", "-e", "bash", "-lc",
+               "python3 scripts/zos-jes.py --list"],
+      "problemMatcher": []
+    },
+    {
+      "label": "z/OS: Spool eines Jobs holen (FTP/JES)",
+      "type": "process",
+      "command": "wsl",
+      "args": ["--cd", "${workspaceFolder}", "-e", "bash", "-lc",
+               "python3 scripts/zos-jes.py --output '${input:jobid}'"],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    { "id": "args", "type": "promptString", "description": "Programmargumente (leer = keine)", "default": "" },
+    { "id": "member", "type": "promptString", "description": "Membername in der PDSE (max. 8 Zeichen)" },
+    { "id": "jobid", "type": "promptString", "description": "Job-ID (z. B. JOB01234)" }
+  ]
+}

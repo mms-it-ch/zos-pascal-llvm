@@ -43,6 +43,8 @@ sh scripts/zfpc prog.pas           # übersetzen, auf z/OS binden
 Linker `scripts/zos-ld` (lädt die Objekte hoch, bindet mit `ld` auf z/OS, hinterlässt ein
 Start-Skript). Zugangsdaten: `.zos.env` im Repo (nicht versioniert).
 
+VS Code (Tasks für Übersetzen, Ausführen, Batch über FTP/JES): [VSCODE.md](VSCODE.md).
+
 ## Werkzeuge
 
 | Skript | Zweck |

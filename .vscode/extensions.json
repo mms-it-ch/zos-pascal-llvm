@@ -1,0 +1,4 @@
+{
+  // Pascal im Editor (Syntax, Formatierung, Navigation). Übersetzen und z/OS: .vscode/tasks.json
+  "recommendations": ["alefragnani.pascal"]
+}

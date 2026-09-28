@@ -18,3 +18,5 @@ pf*/**/*.so
 pf*/**/*.zlink
 pf*/**/*.dbgo
 pf*/**/ppas.sh
+# Spool-Ausgaben von scripts/zos-jes.py
+jes-output/

@@ -236,6 +236,7 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    Interface-Wrapper; fcl-process ExitCode auch mit normalem FPC (FPC-Patch 0030 im Port).
 
 ## Arbeitsweise
+- VS Code: `VSCODE.md` (Tasks, FTP/JES über `scripts/zos-jes.py`, Passwort nur in `~/.netrc` in WSL). Zowe Explorer will der Nutzer nicht.
 - **JCL: JOB-Karte immer mit `REGION=0M,LINES=500000`.**
 - **Host und User-ID nie ins Repo schreiben**; Zugangsdaten nur in `.zos.env` (nicht versioniert).
   Eigenes USS-Verzeichnis `…/ZPAS` mit eigenem ZFS (getrennt von anderen Verzeichnissen und vom Home-ZFS, das der Testlauf am 27.09.2026 einmal vollgeschrieben hat). Bei Ausgaben von
