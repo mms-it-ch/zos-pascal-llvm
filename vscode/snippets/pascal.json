@@ -1,0 +1,87 @@
+{
+  "program": {
+    "prefix": "program",
+    "body": ["program ${1:${TM_FILENAME_BASE}};", "", "{\\$mode objfpc}{\\$H+}", "", "uses", "  SysUtils;", "", "begin", "  $0", "end."],
+    "description": "Programm"
+  },
+  "unit": {
+    "prefix": "unit",
+    "body": ["unit ${1:${TM_FILENAME_BASE}};", "", "{\\$mode objfpc}{\\$H+}", "", "interface", "", "uses", "  SysUtils;", "", "$0", "", "implementation", "", "end."],
+    "description": "Unit"
+  },
+  "procedure": {
+    "prefix": "procedure",
+    "body": ["procedure ${1:Name}(${2});", "begin", "  $0", "end;"],
+    "description": "Prozedur"
+  },
+  "function": {
+    "prefix": "function",
+    "body": ["function ${1:Name}(${2}): ${3:Integer};", "begin", "  Result := $0;", "end;"],
+    "description": "Funktion"
+  },
+  "class": {
+    "prefix": "class",
+    "body": ["${1:TName} = class(${2:TObject})", "private", "  $3", "public", "  constructor Create;", "  destructor Destroy; override;", "end;"],
+    "description": "Klasse"
+  },
+  "record": {
+    "prefix": "record",
+    "body": ["${1:TName} = record", "  ${2:Field}: ${3:Integer};", "end;"],
+    "description": "Record"
+  },
+  "begin": {
+    "prefix": "begin",
+    "body": ["begin", "  $0", "end;"],
+    "description": "begin … end"
+  },
+  "if": {
+    "prefix": "if",
+    "body": ["if ${1:Bedingung} then", "begin", "  $0", "end;"],
+    "description": "if … then"
+  },
+  "ifelse": {
+    "prefix": "ifelse",
+    "body": ["if ${1:Bedingung} then", "begin", "  $2", "end", "else", "begin", "  $0", "end;"],
+    "description": "if … then … else"
+  },
+  "for": {
+    "prefix": "for",
+    "body": ["for ${1:i} := ${2:0} to ${3:n - 1} do", "begin", "  $0", "end;"],
+    "description": "for-Schleife"
+  },
+  "forin": {
+    "prefix": "forin",
+    "body": ["for ${1:x} in ${2:Liste} do", "begin", "  $0", "end;"],
+    "description": "for … in"
+  },
+  "while": {
+    "prefix": "while",
+    "body": ["while ${1:Bedingung} do", "begin", "  $0", "end;"],
+    "description": "while-Schleife"
+  },
+  "repeat": {
+    "prefix": "repeat",
+    "body": ["repeat", "  $0", "until ${1:Bedingung};"],
+    "description": "repeat … until"
+  },
+  "case": {
+    "prefix": "case",
+    "body": ["case ${1:Ausdruck} of", "  ${2:Wert}: $3;", "else", "  $0", "end;"],
+    "description": "case"
+  },
+  "tryexcept": {
+    "prefix": "tryexcept",
+    "body": ["try", "  $1", "except", "  on E: ${2:Exception} do", "    $0", "end;"],
+    "description": "try … except"
+  },
+  "tryfinally": {
+    "prefix": "tryfinally",
+    "body": ["${1:Obj} := ${2:TObject}.Create;", "try", "  $0", "finally", "  $1.Free;", "end;"],
+    "description": "try … finally mit Free"
+  },
+  "asm": {
+    "prefix": "asm",
+    "body": ["asm", "  ${1:L}   ${2:1},${3:X}", "  $0", "end ['r${2}'];"],
+    "description": "Inline-Assembler (HLASM, z/OS)"
+  }
+}

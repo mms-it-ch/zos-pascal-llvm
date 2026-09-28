@@ -1,7 +1,7 @@
 From f77ae5fa67af663ffdc2b09ce5c5f8e393f974c6 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 13:50:49 +0200
-Subject: [PATCH 35/36] s390x: inline assembler (HLASM) for the LLVM code
+Subject: [PATCH 35/37] s390x: inline assembler (HLASM) for the LLVM code
  generator
 
 The s390x port has no instruction tables of its own: LLVM parses the

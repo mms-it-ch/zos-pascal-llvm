@@ -1,7 +1,7 @@
 From 41d8e720d17e853556de06c3827f017acfb7ff12 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 13:35:23 +0200
-Subject: [PATCH 03/36] compiler: z/OS support needed by the run time library
+Subject: [PATCH 03/37] compiler: z/OS support needed by the run time library
 
 - main is a stub with argc/argv/envp that calls FPC_SYSTEMMAIN (as on AIX)
 - C library functions are called by their external names in ASCII mode:

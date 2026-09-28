@@ -33,7 +33,8 @@ export class Builder {
     return u;
   }
 
-  private parseMessages(text: string, cwd: string): void {
+  parseMessages(text: string, cwd: string): void {
+    this.diags.clear();
     const byFile = new Map<string, vscode.Diagnostic[]>();
     for (const line of text.split(/\r?\n/)) {
       const m = MSG.exec(line);
@@ -65,7 +66,6 @@ export class Builder {
     const cwd = path.dirname(uri.fsPath);
     const base = path.basename(uri.fsPath);
     const opts = `${cfg().get<string>('compilerOptions') ?? ''} ${extraOpts}`.trim();
-    this.diags.clear();
     this.out.show(true);
     this.out.appendLine(`> zfpc ${opts} ${base}`);
     const res = await vscode.window.withProgress(

@@ -7,6 +7,13 @@ Bauen: `cd vscode && npm install && npm run compile && npm run package`, dann in
 
 - Syntaxfärbung: Pascal (Free Pascal/Delphi, Direktiven, `asm`-Blöcke in HLASM-Syntax), JCL,
   JES-Spool (Meldungen, RC, Laufzeitfehler, Backtrace).
+- Pascal-Editor: Gliederung/Breadcrumbs (Programm, Unit-Teile, Typen, Klassen mit Feldern,
+  Methoden und Eigenschaften, Routinen mit lokalen Deklarationen; bei `{$if}…{$else}` zählt
+  der erste Zweig), Gehe zu Definition (F12; auch Units in `uses`), Symbolsuche (Strg+T),
+  Formatieren mit `ptop` (Umschalt+Alt+F; Konfiguration mit kleinen Schlüsselwörtern,
+  `vscode/resources/ptop.cfg`), Snippets. RTL-Quellen für F12: `zosPascal.sourcePaths`.
+  `ptop` bauen: `utils/ptop` mit `~/opt/fpc-main/bin/ppcx64` (FPC-Patch 0037 behebt den
+  Absturz von `ptop -c`).
 - Befehle (Editor-Titel, Kontextmenüs, Befehlspalette): übersetzen (Strg+Umschalt+B), übersetzen
   und ausführen im Terminal (Strg+F5), Batch-Job (PDSE, FTP/JES), JCL einreichen. Compilerfehler
   unter „Probleme“, Spool öffnet sich im Editor.
@@ -15,8 +22,15 @@ Bauen: `cd vscode && npm install && npm run compile && npm run package`, dann in
 - JCL-Prüfung: JOB-Karte ohne `REGION=0M,LINES=500000`, Text in Spalte 72, Zeilen über 80.
 - Einstellungen `zosPascal.*`: Pfad der Toolchain (Standard: Arbeitsbereich mit `scripts/zfpc`),
   WSL-Distribution, Compileroptionen (Standard `-gl`), Wartezeit für Jobs.
-- Nicht zusammen mit „Pascal“ (alefragnani.pascal) verwenden: beide färben die Sprache `pascal`.
-- Debugger: lokal mit gdb und für z/OS (in Arbeit).
+- Andere Pascal-Erweiterungen (z. B. alefragnani.pascal) sind nicht nötig und sollten
+  deaktiviert sein (beide färben die Sprache `pascal`).
+- Debuggen, lokal (Linux x86_64 in WSL, gdb): F5 in einer Pascal-Datei oder Konfiguration
+  „Pascal lokal (gdb)“. Die Erweiterung übersetzt mit `~/opt/fpc-main/bin/ppcx64 -g -gw3 -gl -O-`
+  nach `/tmp/zos-pascal-debug/<name>` und startet gdb über den Debug-Adapter der Erweiterung
+  C/C++ (ms-vscode.cpptools). Haltepunkte, Einzelschritt, Aufrufliste, Variablen. Nur RTL-Units
+  lokal vorhanden (`zosPascal.debug.localUnitPaths`); FCL-Programme lassen sich lokal noch nicht
+  übersetzen.
+- Debuggen auf z/OS: in Arbeit.
 
 ## Tasks (`.vscode/tasks.json`, ohne Erweiterung)
 

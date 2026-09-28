@@ -1,7 +1,7 @@
 From c1a5d7dafcf0f809a293a1dd04c58c7ea2574407 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 14:50:57 +0200
-Subject: [PATCH 36/36] z/OS: pointer checks (-gc) detect reads through nil
+Subject: [PATCH 36/37] z/OS: pointer checks (-gc) detect reads through nil
 
 Reading address 0 does not fail on z/OS (the PSA is readable). Allow -gc
 for z/OS; CheckPointer only rejects nil (204) and addresses in the PSA

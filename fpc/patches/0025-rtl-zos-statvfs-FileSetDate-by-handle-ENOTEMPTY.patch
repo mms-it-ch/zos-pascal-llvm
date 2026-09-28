@@ -1,7 +1,7 @@
 From 28395d0306f0e52b2b1cf1b6862ebda786b0d804 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 09:38:35 +0200
-Subject: [PATCH 25/36] rtl/zos: statvfs, FileSetDate by handle, ENOTEMPTY
+Subject: [PATCH 25/37] rtl/zos: statvfs, FileSetDate by handle, ENOTEMPTY
 
 - fpStatFS called statfs, which the z/OS C library does not provide in
   this form (DiskFree/DiskSize crashed); use statvfs like fpfStatFS

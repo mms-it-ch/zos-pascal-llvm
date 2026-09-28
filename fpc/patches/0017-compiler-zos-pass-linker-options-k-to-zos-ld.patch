@@ -1,7 +1,7 @@
 From 7f8f11a361ae35598546c93645b063ffa195368c Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 20:50:11 +0200
-Subject: [PATCH 17/36] compiler/zos: pass linker options (-k) to zos-ld
+Subject: [PATCH 17/37] compiler/zos: pass linker options (-k) to zos-ld
 
 The external linker tool gets Info.ExtraOptions (), which it passes on
 to the z/OS binder (ld), so that e.g. an invalid option makes linking fail

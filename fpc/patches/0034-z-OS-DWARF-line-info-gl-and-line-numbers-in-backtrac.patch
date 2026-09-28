@@ -1,7 +1,7 @@
 From 4f37af537006c08734ce5bb21846ed6a5eb5b573 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 13:13:20 +0200
-Subject: [PATCH 34/36] z/OS: DWARF line info (-gl) and line numbers in
+Subject: [PATCH 34/37] z/OS: DWARF line info (-gl) and line numbers in
  backtraces
 
 Enable dbg_dwarf3 for z/OS and register the DWARF debug info writer for

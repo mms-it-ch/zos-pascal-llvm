@@ -2,7 +2,7 @@
   "name": "zos-pascal",
   "displayName": "z/OS Pascal",
   "description": "Free Pascal für z/OS: Syntaxfärbung (Pascal, HLASM im asm-Block, JCL), übersetzen und ausführen auf z/OS, Batch und JES über FTP, Debugger (lokal mit gdb, z/OS)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "mms-it",
   "license": "LGPL-2.1-or-later",
   "private": true,
@@ -40,6 +40,9 @@
         "aliases": ["JES-Spool"],
         "extensions": [".spool"]
       }
+    ],
+    "snippets": [
+      { "language": "pascal", "path": "./snippets/pascal.json" }
     ],
     "grammars": [
       { "language": "pascal", "scopeName": "source.pascal.zos", "path": "./syntaxes/pascal.tmLanguage.json" },
@@ -136,10 +139,32 @@
           "default": true,
           "markdownDescription": "Warnen, wenn die JOB-Karte nicht `REGION=0M,LINES=500000` enthält."
         },
+        "zosPascal.sourcePaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "markdownDescription": "Weitere Ordner mit Pascal-Quellen für „Gehe zu Definition“ und die Symbolsuche, z. B. die FPC-RTL in WSL: `//wsl.localhost/Ubuntu/home/<user>/src/fpc/rtl`."
+        },
+        "zosPascal.format.ptop": {
+          "type": "string",
+          "default": "~/opt/fpc-main/bin/ptop",
+          "description": "ptop (Free Pascal) in WSL zum Formatieren."
+        },
+        "zosPascal.format.config": {
+          "type": "string",
+          "default": "",
+          "description": "ptop-Konfiguration (leer: die der Erweiterung, Schlüsselwörter klein)."
+        },
         "zosPascal.debug.localCompiler": {
           "type": "string",
           "default": "~/opt/fpc-main/bin/ppcx64",
           "description": "Free Pascal für Linux x86_64 in WSL (lokales Debuggen mit gdb)."
+        },
+        "zosPascal.debug.localUnitPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["~/opt/fpc-main/units/rtl", "~/opt/fpc-main/units/rtlobjpas"],
+          "description": "Unit-Pfade (WSL) für das lokale Übersetzen (x86_64-linux)."
         },
         "zosPascal.debug.gdb": {
           "type": "string",
@@ -148,6 +173,37 @@
         }
       }
     },
+    "breakpoints": [
+      { "language": "pascal" }
+    ],
+    "debuggers": [
+      {
+        "type": "zos-pascal",
+        "label": "z/OS Pascal",
+        "languages": ["pascal"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "target": { "type": "string", "enum": ["local", "zos"], "default": "local",
+                "markdownDescription": "`local`: für Linux x86_64 übersetzen und mit gdb debuggen (WSL). `zos`: auf z/OS debuggen." },
+              "program": { "type": "string", "default": "${file}", "description": "Pascal-Quelldatei des Hauptprogramms." },
+              "args": { "type": ["array", "string"], "default": [], "description": "Programmargumente." },
+              "stopAtEntry": { "type": "boolean", "default": false, "description": "Am Programmanfang anhalten." },
+              "compilerOptions": { "type": "string", "default": "", "description": "Zusätzliche Compileroptionen." }
+            }
+          }
+        },
+        "initialConfigurations": [
+          { "type": "zos-pascal", "request": "launch", "name": "Pascal lokal (gdb)", "target": "local", "program": "${file}", "args": [], "stopAtEntry": false },
+          { "type": "zos-pascal", "request": "launch", "name": "Pascal auf z/OS", "target": "zos", "program": "${file}", "args": [], "stopAtEntry": true }
+        ],
+        "configurationSnippets": [
+          { "label": "z/OS Pascal: lokal (gdb)", "body": { "type": "zos-pascal", "request": "launch", "name": "Pascal lokal (gdb)", "target": "local", "program": "^\"\\${file}\"", "args": [] } },
+          { "label": "z/OS Pascal: auf z/OS", "body": { "type": "zos-pascal", "request": "launch", "name": "Pascal auf z/OS", "target": "zos", "program": "^\"\\${file}\"", "args": [], "stopAtEntry": true } }
+        ]
+      }
+    ],
     "problemMatchers": [
       {
         "name": "zfpc",

@@ -1,0 +1,83 @@
+From 5aff36ba17d1e3cdfd758a51bdf2b064da3f3c8f Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 17:44:08 +0200
+Subject: [PATCH 37/37] ptop: assign the results of GetEnumValue when reading
+ the configuration
+
+ReadConfigFrom, SetOption and GetKeySimList compared the result of
+GetEnumValue with -1 but never assigned it, so TheKey, TheOpt and
+TheIndent were used uninitialized: ptop -c <file> crashed with an access
+violation (also with the file written by ptop -g).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ utils/ptop/ptop.config.pp | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/utils/ptop/ptop.config.pp b/utils/ptop/ptop.config.pp
+index 86af5612..212e3b40 100644
+--- a/utils/ptop/ptop.config.pp
++++ b/utils/ptop/ptop.config.pp
+@@ -229,6 +229,7 @@ implementation
+ 
+ Var
+   TheKey : KeySymbol;
++  K2 : Longint;
+   Found : Boolean;
+   L : TStringList;
+   LT : TLineType;
+@@ -237,6 +238,7 @@ implementation
+ 
+   Procedure SetOption(TheKey : KeySymbol; Var OptionList : String);
+   Var TheOpt  : Options;
++      K2 : Longint;
+       Found : Boolean;
+       K : longint;
+       opt : string;
+@@ -256,7 +258,10 @@ implementation
+ 
+       If Length(Opt)>0 then
+         begin
+-        Found := GetEnumValue(OptionTypInfo,opt) <> -1;
++        K2 := GetEnumValue(OptionTypInfo,opt);
++        Found := K2 <> -1;
++        if Found then
++          TheOpt := Options(K2);
+         If not found then
+           LogWithLocation(i + 1,
+             length(L.Names[i]) + 1 + length(L.Values[L.Names[i]]),
+@@ -273,6 +278,7 @@ implementation
+ 
+   Var
+       TheIndent : Keysymbol;
++      K2 : Longint;
+       Found : Boolean;
+       K : longint;
+       opt : string;
+@@ -291,7 +297,10 @@ implementation
+         opt:=OptionList;
+       If Length(Opt)>0 then
+         begin
+-        Found:=GetEnumValue(EntryTableTypInfo,opt)<>-1;
++        K2:=GetEnumValue(EntryTableTypInfo,opt);
++        Found:=K2<>-1;
++        if Found then
++          TheIndent:=KeySymbol(K2);
+         If not found then
+           begin
+           Verbose (Format(E_UNKNOWN_INDENT, [aType]));
+@@ -378,7 +387,10 @@ implementation
+       Strip(Name);
+       Strip(Value);
+       LT := CheckLineType(Name);
+-      Found := GetEnumValue(EntryTableTypInfo, Name) <> -1;
++      K2 := GetEnumValue(EntryTableTypInfo, Name);
++      Found := K2 <> -1;
++      if Found then
++        TheKey := KeySymbol(K2);
+ 
+       If not found then
+         LogWithLocation (
+-- 
+2.43.0
+
