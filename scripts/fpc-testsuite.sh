@@ -53,6 +53,12 @@ if [ $SUMMARY_ONLY = 0 ]; then
         -c test/cg/obj/$c.c -o $CO/$c.o
     cp $CO/$c.o "$OUT/test/cg/"
   done
+  # C++-Objekte (test/cg/tcppcl*): nur Klassen ohne Bibliothek, wie "gcc -fno-exceptions"
+  for c in cpptcl1 cpptcl2; do
+    [ $CO/$c.o -nt test/cg/obj/$c.cpp ] ||
+      "${ZOS_CLANGXX:-$HOME/build/llvm-zos/bin/clang++}" --target=s390x-ibm-zos -O2         -fno-exceptions -fvisibility=default -c test/cg/obj/$c.cpp -o $CO/$c.o
+    cp $CO/$c.o "$OUT/test/cg/"
+  done
   # Aufräumen auf z/OS: Programme von Tests, die nur übersetzt und nicht ausgeführt
   # werden, bleiben sonst liegen. Jede Minute alles löschen, was älter als der
   # vorige Durchgang ist (lib, bind, run bleiben).

@@ -32,16 +32,21 @@ mkdir -p tstunits/x86_64-linux
 for u in erroru popuperr; do
   "$W" -FEtstunits/x86_64-linux tstunits/$u.pp >/dev/null
 done
+# C-Objekte der C-ABI-Tests (test/cg), wie "make copyfiles"
+mkdir -p "$OUT/test/cg"
+cp test/cg/obj/linux/x86_64/*.o "$OUT/test/cg/" 2>/dev/null
 for d in "$@"; do
+  # Logname: Unterverzeichnisse (test/cg) mit _ statt /
+  dn=$(echo "$d" | tr / _)
   mkdir -p "$OUT/$d"
-  rm -f "$OUT/log.${d}log" "$OUT/faillist.${d}log" "$OUT/longlog.${d}log"
+  rm -f "$OUT/log.${dn}log" "$OUT/faillist.${dn}log" "$OUT/longlog.${dn}log"
   # -L: eigene Hilfs- und Logdateien je dotest-Prozess (sonst Wettlauf)
   ls "$d"/*.pp "$d"/*.pas 2>/dev/null | sort |
     xargs -P "$J" -n 1 "$T/utils/dotest" -L -C"$W" -Tlinux -E -Z
   for k in log faillist longlog; do
     for f in "$OUT"/$k.[0-9]*; do
-      [ -f "$f" ] && cat "$f" >> "$OUT/$k.${d}log" && rm -f "$f"
+      [ -f "$f" ] && cat "$f" >> "$OUT/$k.${dn}log" && rm -f "$f"
     done
   done
-  echo "== $d: $(wc -l < "$OUT/log.${d}log") Einträge"
+  echo "== $d: $(wc -l < "$OUT/log.${dn}log") Einträge"
 done

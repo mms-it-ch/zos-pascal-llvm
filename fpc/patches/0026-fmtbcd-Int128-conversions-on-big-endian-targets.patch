@@ -1,0 +1,61 @@
+From f94c58288046fe393325ebf6087eb2550576fce5 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 09:38:35 +0200
+Subject: [PATCH 26/26] fmtbcd: Int128 conversions on big endian targets
+
+Int128ToBCD and BCDToInt128 treated DWords[0] of Int128Rec as the least
+significant dword. On big endian targets it is the most significant one,
+so numbers beyond 64 bits were converted wrongly (test/units/fmtbcd,
+"Int128<->BCD failed" on s390x z/OS).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ packages/rtl-objpas/src/inc/fmtbcd.pp | 20 ++++++++++++--------
+ 1 file changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/packages/rtl-objpas/src/inc/fmtbcd.pp b/packages/rtl-objpas/src/inc/fmtbcd.pp
+index 80c66ef7..b93eb5b7 100644
+--- a/packages/rtl-objpas/src/inc/fmtbcd.pp
++++ b/packages/rtl-objpas/src/inc/fmtbcd.pp
+@@ -1672,13 +1672,15 @@
+   function Int128ToBCD ( const aValue : Int128Rec ) : tBCD;
+ 
+     procedure DivMod(var Dividend: Int128Rec; const Divisor: DWord; out Remainder: DWord);
+-    var v64: QWord; i: integer;
++    var v64: QWord; i, d: integer;
+     begin
+       Remainder:=0;
+-      // little endian
++      // from the most significant dword down (DWords[3] on little endian,
++      // DWords[0] on big endian)
+       for i:=3 downto 0 do begin
+-        v64 := (QWord(Remainder) shl 32) or Dividend.DWords[i];
+-        Dividend.DWords[i] := v64 div Divisor;
++        {$ifdef FPC_BIG_ENDIAN} d := 3-i; {$else} d := i; {$endif}
++        v64 := (QWord(Remainder) shl 32) or Dividend.DWords[d];
++        Dividend.DWords[d] := v64 div Divisor;
+         Remainder := v64 mod Divisor;
+       end;
+     end;
+@@ -2010,12 +2012,14 @@
+   function BCDToInt128 ( const BCD : tBCD ) : Int128Rec;
+ 
+     procedure MulAdd(var v128: Int128Rec; Mul, Add: DWord);
+-    var v64: QWord; i: integer;
++    var v64: QWord; i, d: integer;
+     begin
+-      // little endian
++      // from the least significant dword up (DWords[0] on little endian,
++      // DWords[3] on big endian)
+       for i:=0 to 3 do begin
+-        v64 := QWord(v128.DWords[i])*Mul + Add;
+-        v128.DWords[i] := v64 and $FFFFFFFF;
++        {$ifdef FPC_BIG_ENDIAN} d := 3-i; {$else} d := i; {$endif}
++        v64 := QWord(v128.DWords[d])*Mul + Add;
++        v128.DWords[d] := v64 and $FFFFFFFF;
+         Add := v64 shr 32;
+       end;
+     end;
+-- 
+2.43.0
+

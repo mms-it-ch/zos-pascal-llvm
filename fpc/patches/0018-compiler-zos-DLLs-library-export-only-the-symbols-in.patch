@@ -1,7 +1,7 @@
 From 647986649ceaca5a5c636d6dcac1b244cbac0154 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 21:21:52 +0200
-Subject: [PATCH 18/23] compiler/zos: DLLs (library) export only the symbols in
+Subject: [PATCH 18/26] compiler/zos: DLLs (library) export only the symbols in
  "exports"
 
 - the target supports hidden symbols; the LLVM writer marks all global

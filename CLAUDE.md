@@ -115,6 +115,15 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   Größen ≤ 24 Byte linksbündig in GPRs, complex-like in FPR 0/2 (Ergebnis und Parameter),
   Parameter immer volle 64-Bit-Slots linksbündig. `pf5/abi.pas` 27/27, test/cg tcalext*/tcalpvr* 12/12.
   Achtung: `test/cg` (und andere Unterverzeichnisse von `test/`) lief in PF3 nicht mit.
+- **Testsuite-Unterverzeichnisse von `test/` (28.09.2026, 58 Verzeichnisse, 982 Tests):** z/OS
+  828/982 = Referenz 828/982; kein Dump (Wächter zählte die Dump-Datasets). Dabei behoben:
+  FPC-Patch 0024 (Record-Wertparameter beliebiger Größe: Slot-Liste war auf 10 begrenzt;
+  `array of const` bei cdecl-Varargs: Compiler-Absturz), 0025 (statvfs statt statfs, FileSetDate
+  per Handle über futimes, ENOTEMPTY -> 5), 0026 (fmtbcd Int128 auf Big-Endian, allgemein),
+  RTL-Units unicodedata/character (test/units/character 36/36), C/C++-Objekte für test/cg
+  (clang/clang++). Nur z/OS: tcse1/2 (Inline-Assembler), tfmtbcd (3: Literal ohne Extended),
+  tstrutils2 (UTF-8), tiorte (rmdir('..') -> EINVAL statt ENOTEMPTY, POSIX erlaubt beides),
+  tfile2 (fcntl-Sperren prozessweit). Aufruf: `fpc-testsuite.sh $(cat ~/subdirs.txt)`.
 - **Backtraces (FPC-Patch 0023, 28.09.2026, `pf5/README.md`):** get_caller_addr/-frame über den
   LE-Dienst `__le_traceback` (DSA = R4 = get_frame - 2048), Ende bei FPC_SYSTEMMAIN bzw. LE,
   Namen aus dem PPA1 in BackTraceStrFunc. Eigener EPM-Schritt scheiterte am Thread-Stack-Ende
@@ -196,8 +205,8 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    gescheiterte Tests; dotest läuft mit `-L` (sonst Wettlauf um `out.`/Logs bei `-P`, Einträge
    gehen verloren). Referenz-Wrapper ohne `-FU` (sonst Unit-Tests „Failed to run“, Exit 2000).
    z/OS-Platz: ZPAS-ZFS 360 MB; zos-ld bindet erst ab 60 MB frei (`ZOS_MIN_FREE_KB`).
-2. Offene TODOs: Unterverzeichnisse von `test/` (cg, opt, units, …) in der Testsuite laufen lassen
-   (Nutzer entscheidet wegen Dump-Risiko). PF4, PF5 (C-ABI) und Backtraces erledigt.
+2. Offene TODOs: keine größeren. PF4, PF5 (C-ABI), Backtraces und die Unterverzeichnisse von
+   `test/` erledigt.
 
 ## Arbeitsweise
 - **JCL: JOB-Karte immer mit `REGION=0M,LINES=500000`.**

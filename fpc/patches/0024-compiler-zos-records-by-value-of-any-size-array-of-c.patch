@@ -1,0 +1,82 @@
+From c444b6f58c3955e8b9b831e6e1a889157f4913b6 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 09:38:35 +0200
+Subject: [PATCH 24/26] compiler/zos: records by value of any size, array of
+ const for cdecl
+
+- llvmgetcgparadef: the list of parameter locations had room for 10
+  entries (internal error 2016121801); on z/OS a record passed by value
+  to a C function occupies one 64 bit slot per 8 bytes, of any number
+  (clang: [n x i64]). The list is now a dynamic array.
+- s390x cpupara: the C-style "array of const" parameter of varargs
+  functions got a location without a type, the compiler crashed in
+  llvmpara.reduceparalocs.
+
+FPC testsuite test/cg: tcalcst4, tcalval4, tprintf.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/llvmdef.pas  | 9 ++++++---
+ compiler/s390x/cpupara.pas | 7 +++++++
+ 2 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/compiler/llvm/llvmdef.pas b/compiler/llvm/llvmdef.pas
+index 773b6fd2..ea08d179 100644
+--- a/compiler/llvm/llvmdef.pas
++++ b/compiler/llvm/llvmdef.pas
+@@ -1140,7 +1140,9 @@           (def.returndef.typ=recorddef) and
+ 
+     function llvmgetcgparadef(const cgpara: tcgpara; beforevalueext: boolean; callercallee: tcallercallee): tdef;
+       var
+-        retdeflist: array[0..9] of tdef;
++        { one entry per location; records passed by value can occupy many
++          locations (z/OS: a sequence of 64 bit slots of any length) }
++        retdeflist: array of tdef;
+         retloc: pcgparalocation;
+         usedef: tdef;
+         valueext: tllvmvalueextension;
+@@ -1172,12 +1174,13 @@           (def.returndef.typ=recorddef) and
+             exit
+           end;
+         { multiple locations -> create temp record }
++        retdeflist:=nil;
+         retloc:=cgpara.location;
+         i:=0;
+         sizeleft:=cgpara.Def.size;
+         repeat
+           if i>high(retdeflist) then
+-            internalerror(2016121801);
++            setlength(retdeflist,length(retdeflist)+16);
+           if assigned(retloc^.next) then
+             begin
+               retdeflist[i]:=retloc^.def;
+@@ -1239,7 +1242,7 @@           (def.returndef.typ=recorddef) and
+           inc(i);
+           retloc:=retloc^.next;
+         until not assigned(retloc);
+-        result:=llvmgettemprecorddef(slice(retdeflist,i),C_alignment,
++        result:=llvmgettemprecorddef(copy(retdeflist,0,i),C_alignment,
+           targetinfos[target_info.system]^.alignment.recordalignmin);
+         include(result.defoptions,df_llvm_no_struct_packing);
+       end;
+diff --git a/compiler/s390x/cpupara.pas b/compiler/s390x/cpupara.pas
+index fafbbb16..c22e285c 100644
+--- a/compiler/s390x/cpupara.pas
++++ b/compiler/s390x/cpupara.pas
+@@ -364,6 +364,13 @@         result:=(def.typ=recorddef) and
+             if (p.proccalloption in cstylearrayofconst) and
+                is_array_of_const(hp.vardef) then
+               begin
++                { the parameter itself needs a type as well (the generic
++                  code, e.g. llvmpara.reduceparalocs, looks at it) }
++                hp.paraloc[side].reset;
++                hp.paraloc[side].def:=voidpointertype;
++                hp.paraloc[side].size:=OS_ADDR;
++                hp.paraloc[side].intsize:=sizeof(pint);
++                hp.paraloc[side].alignment:=std_param_align;
+                 paraloc:=hp.paraloc[side].add_location;
+                 { hack: the paraloc must be valid, but is not actually used }
+                 paraloc^.loc:=LOC_REGISTER;
+-- 
+2.43.0
+
