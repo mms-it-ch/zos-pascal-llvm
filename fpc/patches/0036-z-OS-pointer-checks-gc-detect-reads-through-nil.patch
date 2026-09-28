@@ -1,0 +1,79 @@
+From c1a5d7dafcf0f809a293a1dd04c58c7ea2574407 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 14:50:57 +0200
+Subject: [PATCH 36/36] z/OS: pointer checks (-gc) detect reads through nil
+
+Reading address 0 does not fail on z/OS (the PSA is readable). Allow -gc
+for z/OS; CheckPointer only rejects nil (204) and addresses in the PSA
+below 8 KB (216), since static data lives in the dynamically allocated
+WSA and C memory is unknown to heaptrc.
+
+ncgmem: free the parameter location of the FPC_CHECKPOINTER call only
+after a_call_name. The LLVM code generator reads the parameter from it
+there; before, it emitted the call without argument (invalid IR). Not
+z/OS specific.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/ncgmem.pas  | 4 +++-
+ compiler/systems.pas | 5 ++++-
+ rtl/inc/heaptrc.pp   | 9 +++++++++
+ 3 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/compiler/ncgmem.pas b/compiler/ncgmem.pas
+index a67e10f0..a0d1a694 100644
+--- a/compiler/ncgmem.pas
++++ b/compiler/ncgmem.pas
+@@ -317,10 +317,12 @@ implementation
+             paramanager.getcgtempparaloc(current_asmdata.CurrAsmList,pd,1,paraloc1);
+             hlcg.a_loadaddr_ref_cgpara(current_asmdata.CurrAsmList,left.resultdef,location.reference,paraloc1);
+             paramanager.freecgpara(current_asmdata.CurrAsmList,paraloc1);
+-            paraloc1.done;
+             hlcg.allocallcpuregisters(current_asmdata.CurrAsmList);
+             hlcg.a_call_name(current_asmdata.CurrAsmList,pd,'FPC_CHECKPOINTER',[@paraloc1],nil,false);
+             hlcg.deallocallcpuregisters(current_asmdata.CurrAsmList);
++            { only now: the LLVM code generator takes the parameter from
++              paraloc1 in a_call_name }
++            paraloc1.done;
+             include(current_settings.moduleswitches,cs_checkpointer_called);
+           end;
+       end;
+diff --git a/compiler/systems.pas b/compiler/systems.pas
+index bc9b0369..a9049727 100644
+--- a/compiler/systems.pas
++++ b/compiler/systems.pas
+@@ -469,7 +469,10 @@     tabiinfo = record
+                              + [system_i386_GO32V2]
+                              + [system_i386_os2]
+                              + [system_i386_beos,system_i386_haiku]
+-                             + [system_powerpc_morphos];
++                             + [system_powerpc_morphos]
++                             { z/OS: only a check for addresses in the PSA
++                               (nil), see heaptrc }
++                             + [system_s390x_zos];
+ 
+        systems_support_uf2 = [system_arm_embedded,system_avr_embedded,system_mipsel_embedded,system_xtensa_embedded];
+ 
+diff --git a/rtl/inc/heaptrc.pp b/rtl/inc/heaptrc.pp
+index 1131a152..26448e8c 100644
+--- a/rtl/inc/heaptrc.pp
++++ b/rtl/inc/heaptrc.pp
+@@ -2666,6 +2666,15 @@ procedure CheckPointer(p: pointer); {$ifndef debug_heaptrc} [public, alias : 'FP
+     exit;
+ {$endif go32v2}
+ 
++{$ifdef zos}
++  { reading address 0 does not fail on z/OS: the PSA (prefixed save area,
++    8 KB) is readable. Static data is in the dynamically allocated WSA and
++    C memory is unknown to heaptrc, so only check for the PSA. }
++  if ptruint(p)<$2000 then
++    runerror(216);
++  exit;
++{$endif zos}
++
+   { I don't know where the stack is in other OS !! }
+ {$ifdef windows}
+   { inside stack ? }
+-- 
+2.43.0
+

@@ -1,7 +1,7 @@
 From 2b4b9378f7351c64fcee75b69e4c11cc8cf03516 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 11:13:12 +0200
-Subject: [PATCH 30/35] fcl-process: ExitCode after WaitOnExit on unix
+Subject: [PATCH 30/36] fcl-process: ExitCode after WaitOnExit on unix
 
 WaitOnExit stored the result of WaitProcess, i.e. the already decoded
 exit code, in FExitCode, while PeekExitStatus stores the raw wait status.

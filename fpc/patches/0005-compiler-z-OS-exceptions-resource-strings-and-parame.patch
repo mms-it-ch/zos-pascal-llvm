@@ -1,7 +1,7 @@
 From a071affb5ea72cc7368774e8cfad32e9fb8f6834 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 14:18:20 +0200
-Subject: [PATCH 05/35] compiler: z/OS exceptions, resource strings and
+Subject: [PATCH 05/36] compiler: z/OS exceptions, resource strings and
  parameter passing fixes
 
 - s390x: the landing pad receives the exception object in R1 and the

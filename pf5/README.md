@@ -111,3 +111,21 @@ gibt jeden Befehl als Text weiter und ersetzt nur, was er kennt:
   Compilers zu unsinnigen Typfehlern um `treference` - Ursache waren veraltete `.ppu` in
   `compiler/s390x/units` (`make clean` räumt sie nicht weg). Die Texte liegen trotzdem in
   einer eigenen Unit (`hlasmtxt.pas`), `aasmcpu` bleibt unverändert.
+
+## Lesezugriffe über nil (`-gc -gh`, FPC-Patch 0036, 28.09.2026)
+
+Lesen ab Adresse 0 löst auf z/OS keinen Fehler aus: die PSA (8 KB) ist lesbar, ein Zugriff über
+nil liefert still deren Inhalt. Schreibzugriffe dort scheitern wie gewohnt.
+
+- Zum Suchen solcher Fehler: mit `-gc -gh` übersetzen (Zeigerprüfung mit heaptrc, vorher für
+  z/OS gesperrt). Vor jedem Zugriff über einen Zeiger ruft das Programm dann `CheckPointer` auf:
+  nil → Laufzeitfehler 204, andere Adressen in der PSA (unter X'2000', z. B. nil + Feldoffset)
+  → 216, jeweils mit Backtrace und Zeilennummer. Alles andere gilt als gültig: statische Daten
+  liegen im dynamisch angelegten WSA und C-Speicher kennt heaptrc nicht, eine genauere Prüfung
+  wie unter Linux ginge daher nicht.
+- Kostet einen Aufruf je Zugriff; nur für die Fehlersuche.
+- Dabei behoben (nicht z/OS-spezifisch): `ncgmem` gab den Parameter des Prüfaufrufs vor
+  `a_call_name` frei, der LLVM-Codegenerator schrieb den Aufruf dann ohne Argument
+  (ungültiges IR, llc: "not enough parameters").
+- Test `niltest.pas`: `ok` → rc 0 (Heap, global, Stack, malloc), ohne Argument → 204 in Zeile 39,
+  `psa` → 216; ohne `-gc` rc 3 (nicht erkannt).

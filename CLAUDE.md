@@ -226,7 +226,8 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    WSL-Pfade über `$UHOME`. **Inline-Assembler (HLASM, Patch 0035)**: `pf5/README.md`,
    `pf5/asmtest.pas` 6/6. Compilerbau: `make clean` lässt `compiler/s390x/units/*.ppu` stehen →
    bei seltsamen Typfehlern das Verzeichnis leeren. Noch offen aus der Liste des Nutzers:
-   Lesezugriffe über nil (PSA ab Adresse 0 ist lesbar).
+   Lesezugriffe über nil: `-gc -gh` (Patch 0036, `pf5/README.md`). Liste damit erledigt.
+   Offen: ncgmem-Korrektur (Parameter des FPC_CHECKPOINTER-Aufrufs) als FPC-Meldung.
 3. **Meldungen an FPC (28.09.2026, `fpc/upstream/`):** 5 Issue-Texte + 7 eigenständige Patches gegen
    FPC main b19181d6 (Zweig `upstream-fixes`, Worktree `~/src/fpc-upstream`). Einreichen muss der
    Nutzer (kein GitLab-Zugang). Auf x86_64-linux nachgestellt (LLVM-Compiler `~/build/fpc-llvm-x64`,

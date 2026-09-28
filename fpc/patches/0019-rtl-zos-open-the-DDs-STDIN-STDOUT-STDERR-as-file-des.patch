@@ -1,7 +1,7 @@
 From ee3ed4b13b98fa9e2a174d8102f34cadbccea806 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 21:32:30 +0200
-Subject: [PATCH 19/35] rtl/zos: open the DDs STDIN/STDOUT/STDERR as file
+Subject: [PATCH 19/36] rtl/zos: open the DDs STDIN/STDOUT/STDERR as file
  descriptors in batch
 
 A program started from JCL with POSIX(ON) has no open file descriptors
