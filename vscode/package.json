@@ -2,7 +2,7 @@
   "name": "zos-pascal",
   "displayName": "z/OS Pascal",
   "description": "Free Pascal für z/OS: Syntaxfärbung (Pascal, HLASM im asm-Block, JCL), übersetzen und ausführen auf z/OS, Batch und JES über FTP, Debugger (lokal mit gdb, z/OS)",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "mms-it",
   "license": "LGPL-2.1-or-later",
   "private": true,

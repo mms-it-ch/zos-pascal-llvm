@@ -22,6 +22,14 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$IN" ] && [ -n "$OUT" ] || { echo "zos-irc: Eingabe oder -o fehlt" >&2; exit 2; }
 
+# z/OS-Debugger (VS-Code-Erweiterung): ZOS_ZDBG=1 und -g -> Zeilen-Haken und Frame-Sätze
+# einfügen (scripts/zdbg-instrument.py; Agent runtime/zosdbg.c im RTL-Archiv)
+if [ "$ZOS_ZDBG" = 1 ] && grep -q '^!llvm.dbg.cu' "$IN" 2>/dev/null; then
+  ZI="${OUT%.o}.zdbg.ll"
+  python3 "$(dirname "$(readlink -f "$0")")/zdbg-instrument.py" "$IN" > "$ZI" || exit 1
+  IN=$ZI
+fi
+
 # Debug-Informationen (-g, -gl): die DWARF-Klassen, die LLVM ins GOFF schreibt, weist
 # der z/OS-Binder zurück (IEW2353E 250001). Deshalb zwei Objekte: <out> ohne
 # Debug-Informationen (wird gebunden) und <out ohne .o>.dbgo mit ihnen, aus dem

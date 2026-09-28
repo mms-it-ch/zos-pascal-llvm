@@ -30,7 +30,26 @@ Bauen: `cd vscode && npm install && npm run compile && npm run package`, dann in
   C/C++ (ms-vscode.cpptools). Haltepunkte, Einzelschritt, Aufrufliste, Variablen. Nur RTL-Units
   lokal vorhanden (`zosPascal.debug.localUnitPaths`); FCL-Programme lassen sich lokal noch nicht
   übersetzen.
-- Debuggen auf z/OS: in Arbeit.
+- **Debuggen auf z/OS** (Konfiguration „Pascal auf z/OS“, `"target": "zos"`): Die Erweiterung
+  übersetzt mit `ZOS_ZDBG=1 zfpc -g -O-`, startet das Programm über ssh mit `ZDBG=1` und spricht
+  mit dem Debug-Agenten im Programm. Haltepunkte, Halt am Anfang (`stopAtEntry`), Schritt
+  über/hinein/hinaus, Pause, Aufrufliste mit Zeilen, lokale und globale Variablen (Zahlen,
+  Boolean, Zeichen, Aufzählungen, AnsiString/ShortString/UnicodeString, Records, Arrays,
+  Zeiger/Objekte aufklappbar), Hover und Überwachen (`name`, `a.b.c`). Programmausgabe in der
+  Debugkonsole; die Standardeingabe des Programms ist leer.
+  - Aufbau: `scripts/zdbg-instrument.py` (in `zos-irc`) fügt ins LLVM-IR je Routine einen
+    Frame-Satz (Adressen der Variablen aus `llvm.dbg.declare`) und vor jeder neuen Quellzeile
+    `FPC_ZOS_DBG_LINE` ein, dazu Typbeschreibungen aus den DWARF-Metadaten. Der Agent
+    `runtime/zosdbg.c` (im RTL-Archiv) ist ohne `ZDBG=1` untätig.
+  - Verbindung: Portweiterleitung ist auf dem z/OS-sshd gesperrt; der Agent übernimmt stdin/stdout
+    der ssh-Sitzung (Zeilen `@@Z …`, Programmausgabe über eine Pipe) und gleicht die
+    ASCII/EBCDIC-Wandlung des sshd aus.
+  - Grenzen: nur der Haupt-Thread; RTL und Packages sind nicht instrumentiert (Schritt hinein
+    läuft über sie hinweg); reine Assembler-Routinen (naked) werden ausgelassen; keine
+    Ausdrücke außer Variablen/Feldern; eine Zeile, die sich selbst wiederholt
+    (`while x do inc(i);` in einer Zeile), läuft beim Einzelschritt ganz durch.
+  - Test: `bt.pas` auf z/OS (Haltepunkt, Schritte, Aufrufliste, Variablen); lokal nachgebaut mit
+    dem x86_64-LLVM-FPC (siehe CLAUDE.md).
 
 ## Tasks (`.vscode/tasks.json`, ohne Erweiterung)
 

@@ -2,6 +2,7 @@
 import * as vscode from 'vscode';
 import { Builder } from './build';
 import { PascalDebugProvider } from './debug';
+import { ZosDebugFactory } from './zosdebug';
 import { checkJcl } from './jcl';
 import { JobsProvider, SpoolProvider } from './jes';
 import { PascalDefinitionProvider, PascalSymbolProvider, PascalWorkspaceSymbols, PtopFormatter, SymbolIndex } from './language';
@@ -47,6 +48,7 @@ export function activate(context: vscode.ExtensionContext): void {
     cmd('zosPascal.jes.copyId', (i) => jobs.copyId(i)),
 
     vscode.debug.registerDebugConfigurationProvider('zos-pascal', new PascalDebugProvider(builder, out)),
+    vscode.debug.registerDebugAdapterDescriptorFactory('zos-pascal', new ZosDebugFactory(builder, out)),
     vscode.debug.registerDebugConfigurationProvider('zos-pascal', new PascalDebugProvider(builder, out),
       vscode.DebugConfigurationProviderTriggerKind.Dynamic),
 
