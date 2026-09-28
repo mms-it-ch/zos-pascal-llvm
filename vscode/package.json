@@ -2,7 +2,7 @@
   "name": "zos-pascal",
   "displayName": "z/OS Pascal",
   "description": "Free Pascal für z/OS: Syntaxfärbung (Pascal, HLASM im asm-Block, JCL), übersetzen und ausführen auf z/OS, Batch und JES über FTP, Debugger (lokal mit gdb, z/OS)",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "mms-it",
   "license": "LGPL-2.1-or-later",
   "private": true,
@@ -163,7 +163,7 @@
         "zosPascal.debug.localUnitPaths": {
           "type": "array",
           "items": { "type": "string" },
-          "default": ["~/opt/fpc-main/units/rtl", "~/opt/fpc-main/units/rtlobjpas"],
+          "default": ["~/opt/fpc-main/units/rtl", "~/opt/fpc-main/units/rtlobjpas", "~/opt/fpc-main/units/packages"],
           "description": "Unit-Pfade (WSL) für das lokale Übersetzen (x86_64-linux)."
         },
         "zosPascal.debug.gdb": {

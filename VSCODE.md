@@ -27,9 +27,12 @@ Bauen: `cd vscode && npm install && npm run compile && npm run package`, dann in
 - Debuggen, lokal (Linux x86_64 in WSL, gdb): F5 in einer Pascal-Datei oder Konfiguration
   „Pascal lokal (gdb)“. Die Erweiterung übersetzt mit `~/opt/fpc-main/bin/ppcx64 -g -gw3 -gl -O-`
   nach `/tmp/zos-pascal-debug/<name>` und startet gdb über den Debug-Adapter der Erweiterung
-  C/C++ (ms-vscode.cpptools). Haltepunkte, Einzelschritt, Aufrufliste, Variablen. Nur RTL-Units
-  lokal vorhanden (`zosPascal.debug.localUnitPaths`); FCL-Programme lassen sich lokal noch nicht
-  übersetzen.
+  C/C++ (ms-vscode.cpptools). Haltepunkte, Einzelschritt, Aufrufliste, Variablen. Units: RTL und
+  dieselben Packages wie für z/OS (FCL, fcl-web, fcl-db, …), gebaut mit
+  `ZFPC_PKG_TARGET=x86_64-linux scripts/build-packages.sh` nach `~/opt/fpc-main/units/packages`
+  (mit Debug-Informationen; fehlende rtl-objpas-Units wie rtti werden mitgebaut);
+  `zosPascal.debug.localUnitPaths`. z/OS-eigene Units (zosebcdic, zosrecio, Datasets) gibt es
+  lokal nicht; solche Programme auf z/OS debuggen.
 - **Debuggen auf z/OS** (Konfiguration „Pascal auf z/OS“, `"target": "zos"`): Die Erweiterung
   übersetzt mit `ZOS_ZDBG=1 zfpc -g -O-`, startet das Programm über ssh mit `ZDBG=1` und spricht
   mit dem Debug-Agenten im Programm. Haltepunkte, Halt am Anfang (`stopAtEntry`), Schritt
