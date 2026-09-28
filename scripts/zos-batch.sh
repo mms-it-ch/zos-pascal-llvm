@@ -4,6 +4,8 @@
 #
 #   zos-batch.sh MEMBER [PARM]          Job einreichen, auf das Ende warten, Ausgabe und RC zeigen
 #   zos-batch.sh -n MEMBER [PARM]       nur die JCL ausgeben (nicht einreichen)
+#   zos-batch.sh -j MEMBER [PARM]       JCL für FTP/JES ausgeben (zos-jes.py): Ausgabe nach
+#                                       SYSOUT=* (Spool), ohne RC-Schritte (RC liefert JES)
 #
 # Das Programm vorher in die PDSE binden:  ZOS_PDS=MEMBER zfpc prog.pas
 #
@@ -20,8 +22,9 @@
 # (User-ID) ersetzt, damit sie nicht in der Datei steht. Definiert die Datei STDOUT oder
 # SYSPRINT (bzw. STDERR oder SYSOUT), entfallen beide PATH-DDs dieses Paars.
 set -e
-ONLYJCL=0
+ONLYJCL=0; JES=0
 [ "$1" = -n ] && { ONLYJCL=1; shift; }
+[ "$1" = -j ] && { ONLYJCL=1; JES=1; shift; }
 MEMBER=$(echo "$1" | tr a-z A-Z); PARM=$2
 [ -n "$MEMBER" ] || { echo "usage: zos-batch.sh [-n] MEMBER [PARM]" >&2; exit 2; }
 case "$MEMBER" in
@@ -78,12 +81,17 @@ jcl() {
       STDOUT|SYSPRINT) { has_dd STDOUT || has_dd SYSPRINT; } && continue ;;
       STDERR|SYSOUT) { has_dd STDERR || has_dd SYSOUT; } && continue ;;
     esac
+    if [ $JES = 1 ]; then
+      printf '//%-8s DD SYSOUT=*\n' "$name"
+      continue
+    fi
     printf '//%-8s DD PATH='"'"'%s'"'"',\n' "$name" "$B/$TAG.$ext"
     echo "//            PATHOPTS=(OWRONLY,OCREAT,OAPPEND),"
     echo "//            PATHMODE=(SIRUSR,SIWUSR)"
   done
   [ -n "$EXTRA" ] && printf '%s\n' "$EXTRA"
   echo "//CEEDUMP  DD SYSOUT=*"
+  [ $JES = 1 ] && return
   n=0
   rcstep() {  # Bedingung, Text
     n=$((n+1))

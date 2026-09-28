@@ -50,7 +50,7 @@
       "type": "process",
       "command": "wsl",
       "args": ["--cd", "${fileDirname}", "-e", "bash", "-lc",
-               "R=\"$(wslpath '${workspaceFolder}')\"; ZOS_PDS='${input:member}' \"$R/scripts/zfpc\" -gl '${fileBasename}' && sh \"$R/scripts/zos-batch.sh\" -n '${input:member}' ${input:args} | python3 \"$R/scripts/zos-jes.py\" -"],
+               "R=\"$(wslpath '${workspaceFolder}')\"; ZOS_PDS='${input:member}' \"$R/scripts/zfpc\" -gl '${fileBasename}' && sh \"$R/scripts/zos-batch.sh\" -j '${input:member}' ${input:args} | python3 \"$R/scripts/zos-jes.py\" -"],
       "problemMatcher": {
         "owner": "fpc",
         "fileLocation": ["relative", "${fileDirname}"],

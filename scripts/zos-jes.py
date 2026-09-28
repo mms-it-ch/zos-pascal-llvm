@@ -13,7 +13,8 @@ letzten N Zeilen des Spools zeigen; 0 = nichts, Standard alles).
 
 Zugang: Host aus ZOS_FTP_HOST oder dem Hostteil von ZOS_HOST (.zos.env); Benutzer und Passwort
 aus ~/.netrc (Eintrag "machine <host> login <user> password <pw>", chmod 600) - das Passwort
-steht nie im Repo und nie auf der Kommandozeile. ZOS_FTP_TLS=1: FTPS (AUTH TLS).
+steht nie im Repo und nie auf der Kommandozeile. FTPS (AUTH TLS) mit ZOS_FTP_TLS=1 oder automatisch,
+wenn der Server vor USER TLS verlangt (534).
 
 JES: Der Spool lässt sich per FTP nur holen, wenn die Ausgabe in einer gehaltenen Klasse
 liegt (MSGCLASS). Die JOB-Karte soll REGION=0M,LINES=500000 haben (Warnung sonst).
@@ -56,13 +57,21 @@ def connect(env):
     if not auth:
         sys.exit('zos-jes: kein Eintrag für den Host in ~/.netrc')
     user, _, password = auth
-    if env.get('ZOS_FTP_TLS') == '1':
+    tls = env.get('ZOS_FTP_TLS') == '1'
+    if not tls:
+        ftp = ftplib.FTP(host, timeout=60)
+        try:
+            ftp.login(user, password)
+        except ftplib.error_perm as e:
+            # 534: der Server verlangt TLS vor USER -> FTPS
+            if not str(e).startswith('534'):
+                raise
+            ftp.close()
+            tls = True
+    if tls:
         ftp = ftplib.FTP_TLS(host, timeout=60)
         ftp.login(user, password)
         ftp.prot_p()
-    else:
-        ftp = ftplib.FTP(host, timeout=60)
-        ftp.login(user, password)
     ftp.sendcmd('SITE FILETYPE=JES')
     return ftp, user.upper()
 
