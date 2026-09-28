@@ -37,7 +37,7 @@ PPC="$PREFIX/bin/ppcs390x -Tzos -Clv17.0 -n -FD$PREFIX/bin -FU$U -Fu$U -dFPC_USE
 rm -f "$U"/*.ppu "$U"/*.o.tmp
 
 # C-Laufzeit des Ports (Unwind-Schnittstelle, atomare Operationen)
-for f in zosunwind zosatomic zoscompat zosfpu zossig zosdsn; do
+for f in zosunwind zosatomic zoscompat zosfpu zossig zosdsn zoslines0; do
   "$CLANG" --target=s390x-ibm-zos -O2 -trigraphs -mzos-sys-include="${ZOS_INCLUDE:-$HOME/zos/include}" \
     -D__CHARSET_LIB=1 -D_ALL_SOURCE -D_UNIX03_SOURCE -D_UNIX03_THREADS \
     -c "$REPO/runtime/$f.c" -o "$U/$f.o"

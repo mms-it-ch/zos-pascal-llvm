@@ -27,9 +27,9 @@ Pascal ──FPC (Port s390x/zos, nur LLVM-Backend)──▶ LLVM-IR ──llc (
 | PF2 | Exceptions (eigener XPLINK-Unwinder), Basis-RTL (sysutils, classes, math, strutils, dateutils, fgl, …) | **erreicht 27.09.2026** (`pf2/`: exctest 7/7, objtest 26/26) |
 | PF3 | FPC-Testsuite auf z/OS | tbs 772, tbf 317, webtbf 549, test 2025, webtbs 2696 (Referenz x86_64: 777, 318, 547, 2039, 2696); Unterverzeichnisse von `test/`: 828/982 (Referenz 828/982) |
 | PF4 | Interop Pascal ↔ C, DLL, Batch/JCL, PDSE | **erreicht 27.09.2026** (`pf4/`: Pascal-DLL implizit/dynamisch, Ausnahmen über die DLL-Grenze, Programm in PDSE als Batch-Job) |
-| PF5 | C-ABI für Records (alle Größen, complex-artig, beide Richtungen) | **erreicht 28.09.2026** (`pf5/abi.pas` 27/27, Testsuite `test/cg/tcalext*`, `tcalpvr*` 12/12); Backtraces mit Funktionsnamen (`pf5/bt.pas`) |
+| PF5 | C-ABI für Records (alle Größen, complex-artig, beide Richtungen) | **erreicht 28.09.2026** (`pf5/abi.pas` 27/27, Testsuite `test/cg/tcalext*`, `tcalpvr*` 12/12); Backtraces mit Funktionsnamen und mit `-gl` Zeilennummern (`pf5/bt.pas`) |
 | PF6 | MVS-Datasets und DD-Anweisungen in der normalen Pascal-Datei-E/A (Text mit EBCDIC-Umwandlung, binär), Batch mit SYSIN/SYSPRINT | **erreicht 28.09.2026** (`pf6/`) |
-| PF7 | FPC-Packages: fcl-base, fcl-json, fcl-xml, fcl-process, fcl-net/Sockets, rtl-generics, hash, paszlib u. a. (219 Units) | **erreicht 28.09.2026** (`pf7/pkgtest.pas` 18/18) |
+| PF7 | FPC-Packages: fcl-base, fcl-json, fcl-xml, fcl-process, fcl-net/Sockets, rtl-generics, hash, paszlib u. a., fcl-web, fcl-db, System V IPC (332 Units) | **erreicht 28.09.2026** (`pf7/pkgtest.pas` 18/18, `webtest` 3/3, `ipctest` 22/22) |
 
 ## Benutzung (WSL)
 

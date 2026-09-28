@@ -21,6 +21,23 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$IN" ] && [ -n "$OUT" ] || { echo "zos-irc: Eingabe oder -o fehlt" >&2; exit 2; }
+
+# Debug-Informationen (-g, -gl): die DWARF-Klassen, die LLVM ins GOFF schreibt, weist
+# der z/OS-Binder zurück (IEW2353E 250001). Deshalb zwei Objekte: <out> ohne
+# Debug-Informationen (wird gebunden) und <out ohne .o>.dbgo mit ihnen, aus dem
+# zos-ld (goff-lines.py) die Zeilentabelle für Backtraces liest. Debug-Informationen
+# ändern den Code nicht; goff-lines.py vergleicht den Code beider Objekte.
+if grep -q '^!llvm.dbg.cu' "$IN" 2>/dev/null; then
+  DBGO="${OUT%.o}.dbgo"
+  if [ "$OLEVEL" != 0 ] && [ -x "$BIN/opt" ]; then
+    "$BIN/opt" -O"$OLEVEL" "$IN" | "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$DBGO" &&
+    "$BIN/opt" -strip-debug "$IN" | "$BIN/opt" -O"$OLEVEL" |       "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT"
+  else
+    "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$DBGO" "$IN" &&
+    "$BIN/opt" -strip-debug "$IN" | "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT"
+  fi
+  exit $?
+fi
 if [ "$OLEVEL" != 0 ] && [ -x "$BIN/opt" ]; then
   "$BIN/opt" -O"$OLEVEL" "$IN" | "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT"
 else

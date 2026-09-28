@@ -1,7 +1,7 @@
 From abbbeda14812a1cf5f57a3fa1ac70fa985c84d26 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 12:32:10 +0200
-Subject: [PATCH 01/32] compiler/llvm: only implement the flags methods if
+Subject: [PATCH 01/34] compiler/llvm: only implement the flags methods if
  cpuflags is defined
 
 thlcgllvm declares a_jmp_flags, g_flags2reg and g_flags2ref only if

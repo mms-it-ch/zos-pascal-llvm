@@ -64,7 +64,16 @@ EDivByZero: Division by zero
 - FPC übergibt bei `raise` die Adresse eines Labels + 1 (ungerade); gilt als Adresse in der
   Funktion.
 - Name: `BackTraceStrFunc` hängt den Namen aus dem PPA1 an (Objektdatei-Name, z. B.
-  `P$PROG_$$_PROC$LONGINT`); Zeilennummern gibt es ohne DWARF-Leser für GOFF nicht.
+  `P$PROG_$$_PROC$LONGINT`).
+- **Zeilennummern (`-gl`, FPC-Patch 0034):** FPC erzeugt DWARF (dbg_dwarf3), der z/OS-Binder
+  lehnt die DWARF-Klassen in GOFF aber ab (IEW2353E). Daher schreibt `zos-irc` ein Objekt ohne
+  Debug-Information und daneben `NAME.dbgo` mit DWARF. `zos-ld` liest aus den `.dbgo`-Dateien
+  (`scripts/goff-lines.py`: GOFF-ESD/TXT/RLD, D_LINE-Zeilenprogramm DWARF 2–5, Code-Vergleich
+  mit dem gebundenen Objekt) eine Tabelle Funktion → (Offset, Zeile) und bindet sie als
+  `zzz_lines.o` mit (Tabelle nicht const, sonst IEW2353E). Ohne `-gl` kommt die leere Tabelle
+  `zoslines0.o` aus dem Archiv. Ausgabe wie unter Linux:
+  `$000000002030AAE8  P$BT_$$_LEVEL3$LONGINT,  line 41 of bt.pas`. `ZOS_LINES=0` schaltet es
+  ab. RTL und Packages sind ohne `-gl` übersetzt (dort nur Funktionsnamen).
 - Signale: `zossig.c` übergibt als Frame jetzt R4 + 2048 (wie `get_frame`).
 - Tests: `bt.pas` (2/2; `bt div`, `bt runerror` zeigen die Standardausgabe), `btthr.pas`
   (Ausnahme im Thread und im qsort-Callback durch LE-Frames: 2/2), `raiseperf.pas`: 20000

@@ -430,3 +430,44 @@ void *FPC_ZOS_PC_ADDR(void)
 {
   return (char *)__builtin_return_address(0) + 2;
 }
+
+/* Zeilennummern für Backtraces: Tabelle FPC_ZOS_LINETABLE (zoslines0.c leer;
+ * mit -gl erzeugt zos-ld sie aus den DWARF-Zeilentabellen der Objekte, weil der
+ * Binder die DWARF-Klassen nicht in den Speicher lädt). Je Funktion (Name wie
+ * im PPA1): Datei und Paare (Offset ab Einsprung, Zeile). */
+struct fpc_zos_lrow { unsigned int off, line; };
+struct fpc_zos_lfunc { const char *name, *file; const struct fpc_zos_lrow *rows; unsigned int n; };
+extern struct fpc_zos_lfunc FPC_ZOS_LINETABLE[];
+
+/* Datei und Zeile zu ip; 0 = unbekannt. Rücksprungadressen zeigen hinter den
+ * Aufruf, deshalb zählt die Stelle ip - 1. */
+int FPC_ZOS_FUNC_LINE(uint64_t ip, char *file, int n, int *line)
+{
+  struct _Unwind_Context c;
+  char name[256];
+  const struct fpc_zos_lfunc *f;
+  uint64_t off;
+  if (!FPC_ZOS_LINETABLE[0].name || n < 2 || !find_function(ip, &c) ||
+      !FPC_ZOS_FUNC_NAME(ip, name, sizeof name))
+    return 0;
+  off = ip - c.entry;
+  if (off)
+    off--;
+  for (f = FPC_ZOS_LINETABLE; f->name; f++)
+    if (strcmp(f->name, name) == 0) {
+      unsigned int i, best = 0;
+      int found = 0;
+      for (i = 0; i < f->n; i++)
+        if (f->rows[i].off <= off && (!found || f->rows[i].off >= f->rows[best].off)) {
+          best = i;
+          found = 1;
+        }
+      if (!found)
+        return 0;
+      *line = (int)f->rows[best].line;
+      strncpy(file, f->file, (size_t)n - 1);
+      file[n - 1] = 0;
+      return 1;
+    }
+  return 0;
+}

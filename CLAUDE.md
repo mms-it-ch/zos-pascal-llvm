@@ -219,7 +219,12 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    gehen verloren). Referenz-Wrapper ohne `-FU` (sonst Unit-Tests „Failed to run“, Exit 2000).
    z/OS-Platz: ZPAS-ZFS 360 MB; zos-ld bindet erst ab 60 MB frei (`ZOS_MIN_FREE_KB`).
 2. Offene TODOs: keine größeren. PF4, PF5 (C-ABI), Backtraces und die Unterverzeichnisse von
-   `test/` erledigt.
+   `test/` erledigt. **Zeilennummern in Backtraces (28.09.2026, `-gl`, FPC-Patch 0034):**
+   Objekt ohne DWARF + `.dbgo`-Beiwagen (zos-irc), Zeilentabelle beim Binden
+   (`scripts/goff-lines.py` → `zzz_lines.o`, leer: `zoslines0.o`), s. `pf5/README.md`.
+   zos-ld: `.zos.env` wird mit `HOME=$WH .` eingelesen, das ändert HOME dauerhaft (dash) →
+   WSL-Pfade über `$UHOME`. Noch offen aus der Liste des Nutzers: Inline-Assembler,
+   Lesezugriffe über nil (PSA ab Adresse 0 ist lesbar).
 3. **Meldungen an FPC (28.09.2026, `fpc/upstream/`):** 5 Issue-Texte + 7 eigenständige Patches gegen
    FPC main b19181d6 (Zweig `upstream-fixes`, Worktree `~/src/fpc-upstream`). Einreichen muss der
    Nutzer (kein GitLab-Zugang). Auf x86_64-linux nachgestellt (LLVM-Compiler `~/build/fpc-llvm-x64`,

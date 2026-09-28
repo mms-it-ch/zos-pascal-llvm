@@ -1,6 +1,6 @@
 # PF7: FPC-Packages (FCL u. a.) für z/OS
 
-`scripts/build-packages.sh` (läuft am Ende von `build-rtl.sh` mit) übersetzt 219 Units aus
+`scripts/build-packages.sh` (läuft am Ende von `build-rtl.sh` mit) übersetzt 332 Units (s. u.) aus
 
 rtl-extra, pthreads, rtl-generics, hash, paszlib, fcl-base, fcl-json, fcl-xml, fcl-process,
 fcl-registry, fcl-fpcunit, fcl-passrc, fcl-stl, fcl-res, fcl-async, fcl-net, fcl-extra
@@ -49,9 +49,10 @@ Thread, TInetSocket als Client).
 - **Kindprozesse schreiben EBCDIC:** z/OS-UNIX-Kommandos (`/bin/echo`, `/bin/sh` …) geben
   EBCDIC aus. Unit `zosebcdic`: `EbcdicToAscii`, `AsciiToEbcdic` (IBM-1047 ↔ ISO-8859-1,
   NL ↔ LF, dieselben Tabellen wie die Dataset-Schicht).
-- `TProcess.ExitCode` ist nach `poWaitOnExit` 0 (WaitProcess liefert schon den Exitcode, ExitCode
-  wertet ihn ein zweites Mal aus - wie unter Linux); `ExitStatus` enthält den Exitcode.
-  Probe `procprobe.pas`.
+- `TProcess.ExitCode` war nach `poWaitOnExit` immer 0 (WaitProcess liefert schon den Exitcode,
+  ExitCode wertete ihn ein zweites Mal aus - auch unter Linux). Behoben mit FPC-Patch 0030 (als
+  Meldung an FPC vorbereitet, `fpc/upstream/05-process-exitcode.md`); `ExitStatus` ist jetzt der
+  Rohstatus. Probe `procprobe.pas`.
 - Nicht übersetzt (nicht z/OS oder fehlende Packages): gpm, serial, xmliconv (iconvenc),
   processunicode/fpsimpleservice (Windows), digesttestreport (libtar), rcreader/rcparser (lexlib),
   httpsvlt (HTTPBase).

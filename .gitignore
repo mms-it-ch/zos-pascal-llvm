@@ -16,3 +16,4 @@ pf*/**/*
 pf*/**/*.o
 pf*/**/*.so
 pf*/**/*.zlink
+pf*/**/*.dbgo

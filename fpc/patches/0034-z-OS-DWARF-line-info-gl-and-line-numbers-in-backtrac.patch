@@ -1,0 +1,113 @@
+From 4f37af537006c08734ce5bb21846ed6a5eb5b573 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 13:13:20 +0200
+Subject: [PATCH 34/34] z/OS: DWARF line info (-gl) and line numbers in
+ backtraces
+
+Enable dbg_dwarf3 for z/OS and register the DWARF debug info writer for
+s390x. The z/OS binder rejects the DWARF classes in GOFF, so the port
+strips them before binding and builds a line table from a sidecar
+object; ZosBackTraceStr looks up file and line through FPC_ZOS_FUNC_LINE.
+lnfodwrf does not replace BackTraceStrFunc on z/OS.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/s390x/cputarg.pas |  5 +++++
+ compiler/systems/i_zos.pas |  2 +-
+ rtl/inc/lnfodwrf.pp        |  6 ++++++
+ rtl/zos/system.pp          | 18 +++++++++++++++++-
+ 4 files changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/compiler/s390x/cputarg.pas b/compiler/s390x/cputarg.pas
+index e50d7bf2..b28321f0 100644
+--- a/compiler/s390x/cputarg.pas
++++ b/compiler/s390x/cputarg.pas
+@@ -49,6 +49,11 @@ implementation
+              Debuginfo
+ **************************************}
+ 
++  { needed to select DWARF (-gw); the LLVM code generator writes the debug
++    information itself (dbgllvm) }
++  {$ifndef NoDbgDwarf}
++      ,dbgdwarf
++  {$endif NoDbgDwarf}
+       ;
+ 
+ end.
+diff --git a/compiler/systems/i_zos.pas b/compiler/systems/i_zos.pas
+index 175dcba7..a5aaabd4 100644
+--- a/compiler/systems/i_zos.pas
++++ b/compiler/systems/i_zos.pas
+@@ -79,7 +79,7 @@
+             linkextern   : ld_zos;
+             ar           : ar_gnu_ar;
+             res          : res_none;
+-            dbg          : dbg_none;
++            dbg          : dbg_dwarf3;
+             script       : script_unix;
+             endian       : endian_big;
+             alignment    :
+diff --git a/rtl/inc/lnfodwrf.pp b/rtl/inc/lnfodwrf.pp
+index 85c08600..a0a05557 100644
+--- a/rtl/inc/lnfodwrf.pp
++++ b/rtl/inc/lnfodwrf.pp
+@@ -2406,7 +2406,13 @@ initialization
+ {$endif fpc_has_feature_threading}
+   lastfilename := '';
+   lastopendwarf := false;
++{$ifndef zos}
+   BackTraceStrFunc := @DwarfBacktraceStr;
++{$else}
++  { z/OS: the binder does not load the DWARF classes, and the program object
++    is no ELF file; the system unit prints function names and lines from a
++    line table that zos-ld creates at bind time (FPC_ZOS_LINETABLE) }
++{$endif}
+ 
+ finalization
+   CloseDwarf(false);
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+index 9a9315b6..c4161736 100644
+--- a/rtl/zos/system.pp
++++ b/rtl/zos/system.pp
+@@ -264,6 +264,8 @@ function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+ 
+ { name of the function containing addr, from its PPA1 (runtime/zosunwind.c) }
+ function zos_func_name(ip: PtrUInt; buf: PAnsiChar; n: longint): longint; cdecl; external name 'FPC_ZOS_FUNC_NAME';
++{ source file and line of addr (line table of programs compiled with -gl) }
++function zos_func_line(ip: PtrUInt; buf: PAnsiChar; n: longint; out line: longint): longint; cdecl; external name 'FPC_ZOS_FUNC_LINE';
+ 
+ { backtrace line: address and function name (the name as in the object file,
+   e.g. P$PROG_$$_PROC$LONGINT; without debug information there is no line
+@@ -271,7 +273,8 @@ function zos_func_name(ip: PtrUInt; buf: PAnsiChar; n: longint): longint; cdecl;
+ function ZosBackTraceStr(addr: CodePointer): ShortString;
+ var
+   buf: array[0..239] of AnsiChar;
+-  i: longint;
++  i, line: longint;
++  s: shortstring;
+ begin
+   result:='  $'+hexstr(addr);
+   if (addr<>nil) and
+@@ -284,6 +287,19 @@ function ZosBackTraceStr(addr: CodePointer): ShortString;
+           result:=result+buf[i];
+           inc(i);
+         end;
++      { with -gl: line and file, as the lineinfo units of other targets }
++      if zos_func_line(PtrUInt(addr),@buf[0],length(buf),line)<>0 then
++        begin
++          result:=result+',  line ';
++          str(line,s);
++          result:=result+s+' of ';
++          i:=0;
++          while (buf[i]<>#0) and (length(result)<high(result)) do
++            begin
++              result:=result+buf[i];
++              inc(i);
++            end;
++        end;
+     end;
+ end;
+ 
+-- 
+2.43.0
+

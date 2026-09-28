@@ -23,6 +23,8 @@ shift 3
 LDOPTS="$*"
 
 SELF=$(readlink -f "$0")
+# HOME in WSL (das Einlesen von .zos.env setzt HOME auf das Windows-Profil)
+UHOME=$HOME
 ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
 # .zos.env ist für Git Bash geschrieben ($HOME = Windows-Profil); ssh.exe
 # erwartet msys-Pfade -> HOME beim Einlesen auf das Windows-Profil setzen
@@ -51,7 +53,8 @@ fi
 # Arbeitsverzeichnis im Windows-Temp, weil sftp.exe die Datei lesen muss
 WTMP=$(wslpath -u "$(cmd.exe /c 'echo %TEMP%' 2>/dev/null | tr -d '\r')")
 TMP=$(mktemp -d "$WTMP/zos-ld.XXXXXX")
-trap 'rm -rf "$TMP" "$TMP.tar"' EXIT
+trap 'rm -rf "$TMP" "$TMP.tar" "$TMP.dbg"' EXIT
+mkdir -p "$TMP.dbg"
 
 # RTL als Archiv auf z/OS benutzen, wenn installiert und aktuell
 USELIB=0
@@ -71,11 +74,36 @@ while read -r kind path; do
       fi
       n=$((n+1)); f=$(printf '%03d_%s' $n "$(basename "$path")")
       cp "$path" "$TMP/$f"
+      # Debug-Begleitobjekt (zos-irc, -gl): nur für die Zeilentabelle, nicht binden
+      if [ -f "${path%.o}.dbgo" ]; then
+        cp "${path%.o}.dbgo" "$TMP.dbg/$f.dbgo"
+        cp "$path" "$TMP.dbg/$f"
+      fi
       if [ "$kind" = obj ]; then objs="$objs $f"; else libs="$libs $f"; fi ;;
     clib) clibs="$clibs $path" ;;
   esac
 done < "$LIST"
 [ $USELIB = 1 ] && libs="$libs $DIR/lib/libfpc.a"
+
+# Zeilennummern für Backtraces (-gl): der Binder lädt die DWARF-Klassen nicht in
+# den Speicher, deshalb die Zeilentabellen (D_LINE) hier auslesen und als
+# FPC_ZOS_LINETABLE mitbinden (goff-lines.py, Laufzeit: zosunwind.c). Ohne
+# Zeileninfo kommt die leere Tabelle zoslines0.o aus dem Archiv bzw. der RTL.
+if [ "${ZOS_LINES:-1}" != 0 ] &&
+   ls "$TMP.dbg"/*.dbgo >/dev/null 2>&1 &&
+   python3 "$(dirname "$SELF")/goff-lines.py" "$TMP/zzz_lines.c" "$TMP.dbg"/*.dbgo 2>"$TMP/lines.log" &&
+   ! grep -q "^goff-lines: 0 " "$TMP/lines.log"; then
+  "${ZOS_CLANG:-$UHOME/build/llvm-zos/bin/clang}" --target=s390x-ibm-zos -O1 \
+    -c "$TMP/zzz_lines.c" -o "$TMP/zzz_lines.o" && objs="$objs zzz_lines.o"
+  # die leere Tabelle nicht zusätzlich (doppeltes Symbol)
+  rm -f "$TMP"/*_zoslines0.o
+  objs=$(printf '%s\n' $objs | grep -v '_zoslines0\.o$' | tr '\n' ' ')
+elif [ $USELIB = 0 ] && [ -n "$RTLDIR" ] && [ -f "$RTLDIR/zoslines0.o" ] &&
+     ! printf '%s\n' $objs | grep -q '_zoslines0\.o$'; then
+  cp "$RTLDIR/zoslines0.o" "$TMP/zzz_zoslines0.o"
+  objs="$objs zzz_zoslines0.o"
+fi
+rm -f "$TMP/zzz_lines.c" "$TMP/lines.log"
 
 # Übertragen (tar-Datei binär per sftp) und binden
 ( cd "$TMP" && tar --format=ustar -cf "$TMP.tar" . )

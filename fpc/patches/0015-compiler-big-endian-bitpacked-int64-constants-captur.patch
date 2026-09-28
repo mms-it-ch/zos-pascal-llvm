@@ -1,7 +1,7 @@
 From bae2ba556cf1ade220d242eb33631132036c127b Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 20:41:30 +0200
-Subject: [PATCH 15/32] compiler: big endian bitpacked int64 constants;
+Subject: [PATCH 15/34] compiler: big endian bitpacked int64 constants;
  capturer with nested routines
 
 - typed constants of bitpacked records, big endian: a field of AIntBits

@@ -1,0 +1,46 @@
+From 993acbf8aca708fa4107d43072b4329ff5352084 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 12:39:16 +0200
+Subject: [PATCH 33/34] compiler/llvm: stack checking ({$S+}, -Ct)
+
+The LLVM code generator did not emit the call to fpc_stackcheck at all,
+because the size of the stack frame cannot be passed the usual way. The
+generic fpc_stackcheck does not use that size: it compares the stack
+pointer with StackBottom. So call it with 0 (test/tstack,
+webtbs/tw40598: runtime error 202 on z/OS).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/hlcgllvm.pas | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/compiler/llvm/hlcgllvm.pas b/compiler/llvm/hlcgllvm.pas
+index c6c1db44..0adc0347 100644
+--- a/compiler/llvm/hlcgllvm.pas
++++ b/compiler/llvm/hlcgllvm.pas
+@@ -2153,8 +2153,20 @@ implementation
+ 
+ 
+   procedure thlcgllvm.gen_stack_check_call(list: TAsmList);
+-    begin
+-      { see explanation in thlcgllvm.gen_stack_check_size_para() }
++    var
++      paraloc1 : tcgpara;
++      pd       : tprocdef;
++    begin
++      { the size of the stack frame is not known here (see
++        thlcgllvm.gen_stack_check_size_para()), but the generic
++        fpc_stackcheck() does not use it either: it compares the stack
++        pointer with StackBottom. So pass 0. }
++      pd:=search_system_proc('fpc_stackcheck');
++      paraloc1.init;
++      paramanager.getcgtempparaloc(list,pd,1,paraloc1);
++      a_load_const_cgpara(list,paraloc1.def,0,paraloc1);
++      g_call_system_proc(list,pd,[@paraloc1],nil).resetiftemp;
++      paraloc1.done;
+     end;
+ 
+ 
+-- 
+2.43.0
+
