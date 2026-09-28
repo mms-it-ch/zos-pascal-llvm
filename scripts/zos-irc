@@ -28,6 +28,7 @@ if [ "$ZOS_ZDBG" = 1 ] && grep -q '^!llvm.dbg.cu' "$IN" 2>/dev/null; then
   ZI="${OUT%.o}.zdbg.ll"
   python3 "$(dirname "$(readlink -f "$0")")/zdbg-instrument.py" "$IN" > "$ZI" || exit 1
   IN=$ZI
+  trap 'rm -f "$ZI"' EXIT
 fi
 
 # Debug-Informationen (-g, -gl): die DWARF-Klassen, die LLVM ins GOFF schreibt, weist

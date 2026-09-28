@@ -20,3 +20,4 @@ pf*/**/*.dbgo
 pf*/**/ppas.sh
 # Spool-Ausgaben von scripts/zos-jes.py
 jes-output/
+pf*/**/*.zdbg.ll
