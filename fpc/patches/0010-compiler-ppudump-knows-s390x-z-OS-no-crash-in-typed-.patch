@@ -1,7 +1,7 @@
 From 4a18bb009c9824b04efb03c22e6400b3a290507b Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 15:55:34 +0200
-Subject: [PATCH 10/31] compiler: ppudump knows s390x/z/OS; no crash in typed
+Subject: [PATCH 10/32] compiler: ppudump knows s390x/z/OS; no crash in typed
  dynarray consts after errors
 
 - ppudump: CPU s390x and target zOS-s390x in its tables (the utils did not

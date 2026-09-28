@@ -1,7 +1,7 @@
 From c444b6f58c3955e8b9b831e6e1a889157f4913b6 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 09:38:35 +0200
-Subject: [PATCH 24/31] compiler/zos: records by value of any size, array of
+Subject: [PATCH 24/32] compiler/zos: records by value of any size, array of
  const for cdecl
 
 - llvmgetcgparadef: the list of parameter locations had room for 10

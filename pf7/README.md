@@ -31,6 +31,19 @@ Thread, TInetSocket als Client).
   `fstat` (`st_size` = wartende Bytes); vorher las `RunCommand` nichts.
 - **pthreads-Unit:** nutzt `rtl/zos/pthread.inc`; FIONREAD in `termios.inc`.
 
+## Weitere Packages (28.09.2026): 332 Units
+
+- **fcl-web** (`src/base`, `jsonrpc`, `jwt`, `websocket`, `restbridge`), **fcl-hash**, **fastcgi**,
+  **fcl-db** (`base`: db, bufdataset, …; `sqldb`; `dbase`): HTTP-Server und -Client, Routing,
+  fpweb, WebSocket, JSON-RPC, JWT, FastCGI, TDataSet/BufDataset, sqldb-Grundgerüst.
+  Test `webtest.pas`: TFPHttpServer im Thread, TFPHTTPClient über loopback (GET, POST mit JSON,
+  404): 3/3. Nicht gebaut: Apache-, libmicrohttpd-, http.sys-Anbindung (fremde Bibliotheken),
+  sqldbrestbridge, dbase-Sprachvarianten/Lazarus-Registrierung.
+- **System V IPC** (Unit `ipc`, FPC-Patch 0032): eigener Interface-Teil `rtl-extra/src/zos/ipczos.inc`,
+  Layouts auf z/OS gemessen (`ipcprobe_c.c`; AMODE 64: Zeitfelder hinter 4-Byte-Feldern des
+  31-Bit-Layouts). Shared-Memory-Segmente liegen oberhalb der 2-GB-Grenze und werden auf 1 MB
+  aufgerundet. Test `ipctest.pas` (Shared Memory, Message Queue, Semaphoren): 22/22.
+
 ## Hinweise
 
 - **Kindprozesse schreiben EBCDIC:** z/OS-UNIX-Kommandos (`/bin/echo`, `/bin/sh` …) geben
@@ -39,6 +52,6 @@ Thread, TInetSocket als Client).
 - `TProcess.ExitCode` ist nach `poWaitOnExit` 0 (WaitProcess liefert schon den Exitcode, ExitCode
   wertet ihn ein zweites Mal aus - wie unter Linux); `ExitStatus` enthält den Exitcode.
   Probe `procprobe.pas`.
-- Nicht übersetzt (nicht z/OS oder fehlende Packages): gpm, serial, ipc (SysV-IPC),
-  xmliconv (iconvenc), processunicode/fpsimpleservice (Windows), digesttestreport (libtar),
-  rcreader/rcparser (lexlib), httpsvlt (fcl-web).
+- Nicht übersetzt (nicht z/OS oder fehlende Packages): gpm, serial, xmliconv (iconvenc),
+  processunicode/fpsimpleservice (Windows), digesttestreport (libtar), rcreader/rcparser (lexlib),
+  httpsvlt (HTTPBase).

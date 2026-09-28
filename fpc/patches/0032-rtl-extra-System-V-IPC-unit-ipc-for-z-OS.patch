@@ -1,0 +1,217 @@
+From 9410f5fc776377f71f9bc788f2be5cc95c7b6787 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 12:09:09 +0200
+Subject: [PATCH 32/32] rtl-extra: System V IPC (unit ipc) for z/OS
+
+z/OS gets its own interface part (ipczos.inc): layouts of ipc_perm,
+shmid_ds, msqid_ds, semid_ds and sembuf and the values of the constants,
+measured on z/OS 3.1 (AMODE 64: the time fields follow 4 byte fields of
+the 31 bit layout; shared memory segments are 64 bit segments, rounded
+to 1 MB). The implementation (semctl through the C library) is shared.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ packages/rtl-extra/src/unix/ipc.pp    |   7 ++
+ packages/rtl-extra/src/zos/ipczos.inc | 165 ++++++++++++++++++++++++++
+ 2 files changed, 172 insertions(+)
+ create mode 100755 packages/rtl-extra/src/zos/ipczos.inc
+
+diff --git a/packages/rtl-extra/src/unix/ipc.pp b/packages/rtl-extra/src/unix/ipc.pp
+index 7fa178bb..1d60af79 100644
+--- a/packages/rtl-extra/src/unix/ipc.pp
++++ b/packages/rtl-extra/src/unix/ipc.pp
+@@ -34,6 +34,11 @@ interface
+ 
+ {$i osdefs.inc}       { Compile time defines }
+ 
++{$ifdef zos}
++{ z/OS: own interface part (layouts measured on z/OS) }
++{$i ipczos.inc}
++{$else zos}
++
+ { ----------------------------------------------------------------------
+   General IPC stuff
+   ----------------------------------------------------------------------}
+@@ -889,6 +894,8 @@   TSEMun = record
+ Function semtimedop(semid:cint; sops: psembuf; nsops: size_t; timeOut: ptimespec): cint; {$ifdef FPC_USE_LIBC} cdecl; weakexternal name 'semtimedop'; platform; {$else} platform; {$endif}
+ {$endif}
+ 
++{$endif zos}
++
+ implementation
+ 
+ {$IFDEF FPC_DOTTEDUNITS}
+diff --git a/packages/rtl-extra/src/zos/ipczos.inc b/packages/rtl-extra/src/zos/ipczos.inc
+new file mode 100755
+index 00000000..76cabef0
+--- /dev/null
++++ b/packages/rtl-extra/src/zos/ipczos.inc
+@@ -0,0 +1,165 @@
++{
++    This file is part of the Free Pascal run time library.
++
++    Interface of the ipc unit for z/OS (System V IPC through the C library,
++    AMODE 64). Layouts and values measured on z/OS 3.1 (pf7/ipcprobe_c.c of
++    the port): the time fields follow 4 byte fields of the 31 bit layout
++    (*_31), which are kept as padding.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++
++{$packrecords c}
++
++Type
++  TKey   = cint;
++  key_t  = TKey;
++
++Const
++  { IPC flags for get calls }
++  IPC_CREAT   = $01000000;  { create if key is non-existent }
++  IPC_EXCL    = $02000000;  { fail if key exists }
++  IPC_NOWAIT  = 1;          { return error on wait }
++  IPC_PRIVATE = TKey(0);
++
++  { Actions for ctl calls }
++  IPC_RMID = 1;             { remove identifier }
++  IPC_SET  = 2;             { set ipc_perm options }
++  IPC_STAT = 3;             { get ipc_perm options }
++
++type
++  PIPC_Perm = ^TIPC_Perm;
++  TIPC_Perm = record
++    uid  : uid_t;
++    gid  : gid_t;
++    cuid : uid_t;
++    cgid : gid_t;
++    mode : mode_t;
++  end;
++
++{ Function to generate a IPC key. }
++Function ftok (Path : PAnsiChar;  ID : cint) : TKey; cdecl; external clib name 'ftok';
++
++{ ----------------------------------------------------------------------
++  Sys V Shared memory stuff
++  ----------------------------------------------------------------------}
++
++Type
++  shmatt_t = cuint;
++
++  PShmid_DS = ^TShmid_ds;
++  TShmid_ds = record
++    shm_perm       : TIPC_Perm;
++    shm_segsz_31   : array[0..3] of byte;
++    shm_lpid       : pid_t;
++    shm_cpid       : pid_t;
++    shm_nattch     : shmatt_t;
++    shm_atime_31   : array[0..3] of byte;
++    shm_dtime_31   : array[0..3] of byte;
++    shm_ctime_31   : array[0..3] of byte;
++    shm_rsvd1      : cint;
++    shm_flags64    : cuint;     { shm_seg64:1, shm_rsvd2:7, shm_dump_prio64, shm_rsvd3 }
++    shm_segaddr64  : pointer;
++    shm_segsz      : size_t;
++    shm_atime      : time_t;
++    shm_dtime      : time_t;
++    shm_ctime      : time_t;
++  end;
++
++Const
++  SHM_RDONLY = 1;
++  SHM_RND    = 2;
++  SHMLBA     = 4096;
++
++Function shmget(key: Tkey; size:size_t; flag:cint):cint; cdecl; external clib name 'shmget';
++Function shmat (shmid:cint; shmaddr:pointer; shmflg:cint):pointer; cdecl; external clib name 'shmat';
++Function shmdt (shmaddr:pointer):cint; cdecl; external clib name 'shmdt';
++Function shmctl(shmid:cint; cmd:cint; buf: pshmid_ds): cint; cdecl; external clib name 'shmctl';
++
++{ ----------------------------------------------------------------------
++  Message queue stuff
++  ----------------------------------------------------------------------}
++
++Const
++  MSG_NOERROR = 4;
++
++Type
++  msgqnum_t = cuint;
++  msglen_t  = cuint;
++
++  PMSQid_ds = ^TMSQid_ds;
++  TMSQid_ds = record
++    msg_perm     : TIPC_perm;
++    msg_qnum     : msgqnum_t;
++    msg_qbytes   : msglen_t;
++    msg_lspid    : pid_t;
++    msg_lrpid    : pid_t;
++    msg_stime_31 : array[0..3] of byte;
++    msg_rtime_31 : array[0..3] of byte;
++    msg_ctime_31 : array[0..3] of byte;
++    msg_stime    : time_t;
++    msg_rtime    : time_t;
++    msg_ctime    : time_t;
++  end;
++
++  PMSGbuf = ^TMSGbuf;
++  TMSGbuf = record
++    mtype : clong;
++    mtext : array[0..0] of AnsiChar;
++  end;
++
++Function msgget(key: TKey; msgflg:cint):cint; cdecl; external clib name 'msgget';
++Function msgsnd(msqid:cint; msgp: PMSGBuf; msgsz: size_t; msgflg:cint): cint; cdecl; external clib name 'msgsnd';
++Function msgrcv(msqid:cint; msgp: PMSGBuf; msgsz: size_t; msgtyp:clong; msgflg:cint): ssize_t; cdecl; external clib name 'msgrcv';
++Function msgctl(msqid:cint; cmd: cint; buf: PMSQid_ds): cint; cdecl; external clib name 'msgctl';
++
++{ ----------------------------------------------------------------------
++  Semaphores stuff
++  ----------------------------------------------------------------------}
++
++const
++  SEM_UNDO    = 2;
++  SEM_GETVAL  = 21;
++  SEM_SETVAL  = 22;
++  SEM_GETPID  = 23;
++  SEM_GETNCNT = 24;
++  SEM_GETZCNT = 25;
++  SEM_GETALL  = 26;
++  SEM_SETALL  = 27;
++
++type
++  PSEMid_ds = ^TSEMid_ds;
++  TSEMid_ds = record
++    sem_perm     : tipc_perm;
++    sem_nsems    : cushort;
++    __filler     : cshort;
++    sem_otime_31 : array[0..3] of byte;
++    sem_ctime_31 : array[0..3] of byte;
++    sem_otime    : time_t;
++    sem_ctime    : time_t;
++  end;
++
++  PSEMbuf = ^TSEMbuf;
++  TSEMbuf = record
++    sem_num : cushort;
++    sem_op  : cshort;
++    sem_flg : cshort;
++  end;
++
++  PSEMun = ^TSEMun;
++  TSEMun = record
++   case cint of
++      0 : ( val : cint );
++      1 : ( buf : PSEMid_ds );
++      2 : ( arr : PWord );              // ^ushort
++   end;
++
++Function semget(key:Tkey; nsems:cint; semflg:cint): cint; cdecl; external clib name 'semget';
++Function semop(semid:cint; sops: psembuf; nsops: size_t): cint; cdecl; external clib name 'semop';
++Function semctl(semid:cint; semnum:cint; cmd:cint; var arg: tsemun): cint;
+-- 
+2.43.0
+

@@ -1,7 +1,7 @@
 From 11d7da677ca05a6acf7b756bc602c3c2e30e989f Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 20:02:43 +0200
-Subject: [PATCH 12/31] z/OS: setjmp/longjmp, direct atomics, iconv names;
+Subject: [PATCH 12/32] z/OS: setjmp/longjmp, direct atomics, iconv names;
  LLVM: typed const GEP
 
 - rtl/s390x, z/OS: fpc_setjmp/fpc_longjmp and setjmp/longjmp are the

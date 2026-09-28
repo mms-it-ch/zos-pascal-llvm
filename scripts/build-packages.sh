@@ -15,13 +15,23 @@ U=$PREFIX/units/zos
 P=$FPCSRC/packages
 LOG=${LOG:-$HOME/build-packages.log}
 PKGS=${*:-"rtl-extra pthreads rtl-generics hash paszlib fcl-base fcl-json fcl-xml fcl-process
-  fcl-registry fcl-fpcunit fcl-passrc fcl-stl fcl-res fcl-async fcl-net fcl-extra"}
+  fcl-registry fcl-fpcunit fcl-passrc fcl-stl fcl-res fcl-async fcl-net fcl-extra
+  fcl-hash fastcgi fcl-db/src/dbase fcl-db/src/base fcl-db/src/sqldb
+  fcl-web/src/base fcl-web/src/jsonrpc fcl-web/src/jwt fcl-web/src/websocket
+  fcl-web/src/restbridge"}
+# Einträge mit /src/ sind einzelne Quellverzeichnisse eines Packages (fcl-web)
+dirs_of() {
+  case "$1" in
+    */src/*) echo "$1" ;;
+    *) echo "$1/src $1/src/inc $1/src/unix $1/src/zos" ;;
+  esac
+}
 
 # Suchpfade: alle Packages (src, src/inc, src/unix)
 SP=""
 for p in $PKGS; do
-  for d in src src/inc src/unix src/zos; do
-    [ -d "$P/$p/$d" ] && SP="$SP -Fu$P/$p/$d -Fi$P/$p/$d"
+  for d in $(dirs_of "$p"); do
+    [ -d "$P/$d" ] && SP="$SP -Fu$P/$d -Fi$P/$d"
   done
 done
 # rtl/zos: pthread.inc für die Unit pthreads
@@ -35,8 +45,9 @@ PPC="$PREFIX/bin/ppcs390x -Tzos -Clv17.0 -n -FD$PREFIX/bin -FU$U -Fu$U $SP -Fi$F
 #    ("checksum changed", z. B. generics.collections/generics.defaults).
 ok=0; failed=""; units=""
 for p in $PKGS; do
-  for d in src src/unix; do
-    for f in "$P/$p/$d"/*.pp "$P/$p/$d"/*.pas; do
+  case "$p" in */src/*) srcdirs="$p" ;; *) srcdirs="$p/src $p/src/unix" ;; esac
+  for d in $srcdirs; do
+    for f in "$P/$d"/*.pp "$P/$d"/*.pas; do
       [ -f "$f" ] || continue
       # Programme (keine Units) überspringen
       head -c 4000 "$f" | grep -qiE '^[[:space:]]*(unit|library)[[:space:]]' || continue
