@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "JCL",
+  "scopeName": "source.jcl",
+  "patterns": [
+    { "name": "comment.line.jcl", "match": "^//\\*.*$" },
+    { "name": "comment.line.jes2.jcl", "match": "^/\\*(JOBPARM|ROUTE|OUTPUT|XEQ|PRIORITY|MESSAGE|NOTIFY|SETUP|SIGNOFF|SIGNON|NETACCT)\\b.*$" },
+    { "name": "keyword.control.delimiter.jcl", "match": "^/\\*\\s*$" },
+    { "name": "keyword.control.null.jcl", "match": "^//\\s*$" },
+    {
+      "comment": "//NAME OPERATION Operanden  Kommentar (ab Spalte 73: Folgenummer)",
+      "begin": "^(//)([A-Za-z@#$][A-Za-z0-9@#$.]{0,16})?\\s+(JOB|EXEC|DD|PROC|PEND|IF|THEN|ELSE|ENDIF|SET|INCLUDE|JCLLIB|OUTPUT|CNTL|ENDCNTL|EXPORT|SCHEDULE|XMIT|COMMAND)\\b",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.statement.jcl" },
+        "2": { "name": "entity.name.label.jcl" },
+        "3": { "name": "keyword.control.operation.jcl" }
+      },
+      "end": "$",
+      "patterns": [ { "include": "#operands" } ]
+    },
+    {
+      "comment": "Fortsetzungszeile",
+      "begin": "^(//)(\\s+)(?=\\S)",
+      "beginCaptures": { "1": { "name": "punctuation.definition.statement.jcl" } },
+      "end": "$",
+      "patterns": [ { "include": "#operands" } ]
+    }
+  ],
+  "repository": {
+    "operands": {
+      "patterns": [
+        { "name": "string.quoted.single.jcl", "match": "'(?:[^']|'')*'" },
+        { "name": "variable.parameter.symbolic.jcl", "match": "&&?[A-Za-z@#$][A-Za-z0-9@#$]*\\.?" },
+        {
+          "match": "\\b(PGM|PROC|DSN|DSNAME|DISP|DCB|SPACE|UNIT|VOL|SYSOUT|CLASS|MSGCLASS|MSGLEVEL|NOTIFY|REGION|LINES|TIME|COND|PARM|PATH|PATHOPTS|PATHMODE|PATHDISP|FILEDATA|RECFM|LRECL|BLKSIZE|DSORG|DSNTYPE|LIKE|DATACLAS|STORCLAS|MGMTCLAS|AVGREC|DUMMY|DYNAM|HOLD|FREE|OUTLIM|COPIES|DEST|TYPRUN|USER|PASSWORD|GROUP|ACCT|ADDRSPC|PERFORM|RD|RESTART|SCHENV|JOBRC|MEMLIMIT|ORDER|ORDERS|STEPLIB|STDPARM|KEYLEN|KEYOFF|RECORG|EXPDT|RETPD|LABEL|SUBSYS|OUTPUT|SYMBOLS|SYMLIST|SEGMENT|SPIN|LGSTREAM|RLS|CCSID|DSID|EATTR|MAXGENS|GDGORDER|DDNAME|PRTY|TYPE|ORDER|CEEOPTS)(=)",
+          "captures": { "1": { "name": "variable.parameter.keyword.jcl" }, "2": { "name": "keyword.operator.jcl" } }
+        },
+        { "name": "variable.parameter.keyword.jcl", "match": "\\b[A-Z][A-Z0-9]*(?==)" },
+        { "name": "constant.language.jcl", "match": "\\b(SHR|OLD|NEW|MOD|CATLG|DELETE|KEEP|PASS|UNCATLG|TRK|CYL|RLSE|CONTIG|OCREAT|OWRONLY|ORDONLY|ORDWR|OAPPEND|OTRUNC|OEXCL|SIRUSR|SIWUSR|SIXUSR|SIRWXU|SIRGRP|SIWGRP|SIROTH|FB|VB|FBA|VBA|U|F|V|PS|PO|LIBRARY|PDS|ABEND|RC|ABENDCC|RUN|NOT|AND|OR|EVEN|ONLY)\\b" },
+        { "name": "constant.numeric.jcl", "match": "\\b[0-9]+[KMG]?\\b" },
+        { "name": "keyword.operator.jcl", "match": "[=,()]|<=|>=|<|>|¬=|\\b(GT|GE|LT|LE|EQ|NE)\\b" },
+        { "name": "comment.line.trailing.jcl", "match": "(?<=\\S)\\s{2,}[^,'\\s][^']*$" }
+      ]
+    }
+  }
+}

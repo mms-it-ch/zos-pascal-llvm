@@ -1,0 +1,38 @@
+zos-pascal-llvm - Free Pascal for z/OS (s390x, XPLINK-64, LLVM code generator)
+
+Copyright (c) 2026 mms-it-ch <info@mms-it.ch>
+
+This project is a port of Free Pascal to z/OS. It follows the licensing of
+Free Pascal:
+
+1. Everything in this repository that is not listed under 2. and 3. - the
+   port run time (runtime/), the scripts (scripts/), the tests and the
+   documentation - is distributed under the GNU Lesser General Public License,
+   version 2.1 or (at your option) any later version (see COPYING.LGPL.txt),
+   with the static linking exception of the Free Pascal run time library
+   (see COPYING.FPC; "the file COPYING" mentioned there is COPYING.LGPL.txt).
+   Programs linked with the port run time may therefore be distributed under
+   terms of your choice.
+
+   SPDX-License-Identifier: LGPL-2.1-or-later WITH FPC-exception
+
+2. fpc/patches/ contains changes to Free Pascal. Each change is licensed like
+   the Free Pascal file it modifies:
+   - compiler (compiler/): GNU General Public License, version 2 or later
+     (see COPYING.GPL.txt)
+   - run time library and packages (rtl/, packages/): as under 1.
+     (COPYING.LGPL.txt with the exception in COPYING.FPC)
+
+3. llvm/patches/ contains changes to LLVM. They are licensed like LLVM itself
+   under the Apache License v2.0 with LLVM Exceptions
+   (https://llvm.org/LICENSE.txt).
+
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+Not part of this repository: the z/OS system headers (IBM) and other IBM
+material. They are needed to build the run time but are only used from a
+local copy taken from a licensed z/OS system.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the license texts for details.

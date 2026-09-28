@@ -5,7 +5,8 @@
   zos-jes.py -                    JCL von stdin (z. B. zos-batch.sh -n MEMBER | zos-jes.py -)
   zos-jes.py --status JOBnnnnn    Status eines Jobs
   zos-jes.py --output JOBnnnnn    Spool eines Jobs holen
-  zos-jes.py --list               eigene Jobs
+  zos-jes.py --list [--json]      eigene Jobs (--json: für die VS-Code-Erweiterung)
+  zos-jes.py --delete JOBnnnnn    Job aus dem Spool löschen
 
 Optionen: --nowait (nur einreichen), --wait SEK (Standard 300), --out DIR (Spool-Dateien,
 Standard ./jes-output), --purge (Job nach dem Holen aus dem Spool löschen), --tail N (nur die
@@ -23,6 +24,7 @@ Returncode des Skripts: RC des Jobs (höchstens 255); JCL-Fehler/ABEND: 12; Zeit
 import argparse
 import ftplib
 import io
+import json
 import netrc
 import os
 import re
@@ -152,13 +154,35 @@ def main():
     ap.add_argument('--out', default='jes-output')
     ap.add_argument('--purge', action='store_true')
     ap.add_argument('--tail', type=int)
+    ap.add_argument('--json', action='store_true')
+    ap.add_argument('--delete')
     a = ap.parse_args()
     env = load_env()
     ftp, user = connect(env)
     try:
         if a.list:
             ftp.sendcmd(f'SITE JESJOBNAME=* JESOWNER={user}')
-            ftp.retrlines('LIST')
+            if not a.json:
+                ftp.retrlines('LIST')
+                return 0
+            lines = []
+            ftp.retrlines('LIST', lines.append)
+            jobs = []
+            for line in lines[1:]:
+                w = line.split()
+                if len(w) < 4 or not re.match(r'J(OB)?\d+$', w[1]):
+                    continue
+                m = re.search(r'(RC=\d+|ABEND=?\s*\S+|\(?JCL error\)?|CC=\d+)', line, re.I)
+                n = re.search(r'(\d+) spool file', line)
+                jobs.append({'name': w[0], 'id': w[1], 'owner': w[2], 'status': w[3],
+                             'class': w[4] if len(w) > 4 and w[3] != 'INPUT' else '',
+                             'rc': m.group(1) if m else '',
+                             'spool': int(n.group(1)) if n else 0})
+            print(json.dumps(jobs))
+            return 0
+        if a.delete:
+            ftp.delete(a.delete.upper())
+            print(f'zos-jes: {a.delete.upper()} gelöscht', file=sys.stderr)
             return 0
         if a.status:
             st, rc = status(ftp, a.status.upper())

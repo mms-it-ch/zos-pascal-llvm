@@ -1,0 +1,175 @@
+{
+  "name": "zos-pascal",
+  "displayName": "z/OS Pascal",
+  "description": "Free Pascal für z/OS: Syntaxfärbung (Pascal, HLASM im asm-Block, JCL), übersetzen und ausführen auf z/OS, Batch und JES über FTP, Debugger (lokal mit gdb, z/OS)",
+  "version": "0.1.0",
+  "publisher": "mms-it",
+  "license": "LGPL-2.1-or-later",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mms-it-ch/zos-pascal-llvm"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Debuggers", "Other"],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:scripts/zfpc",
+    "onLanguage:pascal",
+    "onLanguage:jcl",
+    "onDebugResolve:zos-pascal"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "pascal",
+        "aliases": ["Pascal", "pascal"],
+        "extensions": [".pas", ".pp", ".inc", ".lpr", ".dpr"],
+        "configuration": "./language-configuration/pascal.json"
+      },
+      {
+        "id": "jcl",
+        "aliases": ["JCL", "jcl"],
+        "extensions": [".jcl", ".JCL", ".cntl"],
+        "configuration": "./language-configuration/jcl.json"
+      },
+      {
+        "id": "jes-spool",
+        "aliases": ["JES-Spool"],
+        "extensions": [".spool"]
+      }
+    ],
+    "grammars": [
+      { "language": "pascal", "scopeName": "source.pascal.zos", "path": "./syntaxes/pascal.tmLanguage.json" },
+      { "scopeName": "source.hlasm.inline", "path": "./syntaxes/hlasm-inline.tmLanguage.json" },
+      { "language": "jcl", "scopeName": "source.jcl", "path": "./syntaxes/jcl.tmLanguage.json" },
+      { "language": "jes-spool", "scopeName": "text.jes.spool", "path": "./syntaxes/spool.tmLanguage.json" }
+    ],
+    "commands": [
+      { "command": "zosPascal.build", "title": "z/OS: übersetzen und binden", "category": "z/OS Pascal", "icon": "$(tools)" },
+      { "command": "zosPascal.run", "title": "z/OS: übersetzen und ausführen", "category": "z/OS Pascal", "icon": "$(play)" },
+      { "command": "zosPascal.batch", "title": "z/OS: als Batch-Job ausführen (PDSE, JES)", "category": "z/OS Pascal", "icon": "$(server-process)" },
+      { "command": "zosPascal.submitJcl", "title": "z/OS: JCL einreichen", "category": "z/OS Pascal", "icon": "$(run-all)" },
+      { "command": "zosPascal.jes.refresh", "title": "Aktualisieren", "category": "z/OS JES", "icon": "$(refresh)" },
+      { "command": "zosPascal.jes.open", "title": "Spool öffnen", "category": "z/OS JES", "icon": "$(output)" },
+      { "command": "zosPascal.jes.delete", "title": "Job löschen", "category": "z/OS JES", "icon": "$(trash)" },
+      { "command": "zosPascal.jes.copyId", "title": "Job-ID kopieren", "category": "z/OS JES" }
+    ],
+    "menus": {
+      "editor/title": [
+        { "command": "zosPascal.run", "when": "editorLangId == pascal", "group": "navigation@1" },
+        { "command": "zosPascal.build", "when": "editorLangId == pascal", "group": "navigation@2" },
+        { "command": "zosPascal.submitJcl", "when": "editorLangId == jcl", "group": "navigation@1" }
+      ],
+      "explorer/context": [
+        { "command": "zosPascal.build", "when": "resourceLangId == pascal", "group": "zos@1" },
+        { "command": "zosPascal.run", "when": "resourceLangId == pascal", "group": "zos@2" },
+        { "command": "zosPascal.batch", "when": "resourceLangId == pascal", "group": "zos@3" },
+        { "command": "zosPascal.submitJcl", "when": "resourceLangId == jcl", "group": "zos@1" }
+      ],
+      "editor/context": [
+        { "command": "zosPascal.build", "when": "editorLangId == pascal", "group": "zos@1" },
+        { "command": "zosPascal.run", "when": "editorLangId == pascal", "group": "zos@2" },
+        { "command": "zosPascal.batch", "when": "editorLangId == pascal", "group": "zos@3" },
+        { "command": "zosPascal.submitJcl", "when": "editorLangId == jcl", "group": "zos@1" }
+      ],
+      "view/title": [
+        { "command": "zosPascal.jes.refresh", "when": "view == zosPascal.jobs", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "zosPascal.jes.open", "when": "view == zosPascal.jobs && viewItem == job", "group": "inline@1" },
+        { "command": "zosPascal.jes.delete", "when": "view == zosPascal.jobs && viewItem == job", "group": "inline@2" },
+        { "command": "zosPascal.jes.copyId", "when": "view == zosPascal.jobs && viewItem == job", "group": "z@1" }
+      ],
+      "commandPalette": [
+        { "command": "zosPascal.jes.open", "when": "false" },
+        { "command": "zosPascal.jes.delete", "when": "false" },
+        { "command": "zosPascal.jes.copyId", "when": "false" }
+      ]
+    },
+    "keybindings": [
+      { "command": "zosPascal.build", "key": "ctrl+shift+b", "when": "editorLangId == pascal" },
+      { "command": "zosPascal.run", "key": "ctrl+f5", "when": "editorLangId == pascal" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "zosPascal", "title": "z/OS", "icon": "media/zos.svg" }
+      ]
+    },
+    "views": {
+      "zosPascal": [
+        { "id": "zosPascal.jobs", "name": "JES-Jobs" }
+      ]
+    },
+    "configuration": {
+      "title": "z/OS Pascal",
+      "properties": {
+        "zosPascal.toolchainPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Pfad des Repos `zos-pascal-llvm` (mit `scripts/zfpc`), als Windows- oder WSL-Pfad. Leer: der Arbeitsbereichsordner, der `scripts/zfpc` enthält."
+        },
+        "zosPascal.wslDistribution": {
+          "type": "string",
+          "default": "",
+          "description": "WSL-Distribution (leer: Standard)."
+        },
+        "zosPascal.compilerOptions": {
+          "type": "string",
+          "default": "-gl",
+          "markdownDescription": "Zusätzliche Optionen für `zfpc` (z. B. `-gl` für Zeilennummern im Backtrace, `-gc -gh` für nil-Prüfungen)."
+        },
+        "zosPascal.jes.waitSeconds": {
+          "type": "number",
+          "default": 300,
+          "description": "Wie lange auf das Ende eines eingereichten Jobs gewartet wird."
+        },
+        "zosPascal.jes.autoRefreshSeconds": {
+          "type": "number",
+          "default": 0,
+          "description": "Jobliste automatisch aktualisieren (Sekunden, 0 = nur von Hand)."
+        },
+        "zosPascal.jcl.checkJobCard": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Warnen, wenn die JOB-Karte nicht `REGION=0M,LINES=500000` enthält."
+        },
+        "zosPascal.debug.localCompiler": {
+          "type": "string",
+          "default": "~/opt/fpc-main/bin/ppcx64",
+          "description": "Free Pascal für Linux x86_64 in WSL (lokales Debuggen mit gdb)."
+        },
+        "zosPascal.debug.gdb": {
+          "type": "string",
+          "default": "gdb",
+          "description": "gdb in WSL (lokales Debuggen)."
+        }
+      }
+    },
+    "problemMatchers": [
+      {
+        "name": "zfpc",
+        "owner": "zos-pascal",
+        "source": "fpc",
+        "fileLocation": ["autoDetect", "${fileDirname}"],
+        "pattern": {
+          "regexp": "^(.+?)\\((\\d+),(\\d+)\\)\\s+(Fatal|Error|Warning|Note|Hint):\\s+(.*)$",
+          "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "HLASM (Pascal-asm-Block)",
+  "scopeName": "source.hlasm.inline",
+  "patterns": [
+    {
+      "comment": "Marke am Zeilenanfang (LOOP:)",
+      "match": "^\\s*([A-Za-z_@#$][A-Za-z0-9_@#$]*)(:)",
+      "captures": {
+        "1": { "name": "entity.name.label.hlasm" },
+        "2": { "name": "punctuation.separator.label.hlasm" }
+      }
+    },
+    {
+      "comment": "Befehl: erstes Wort der Anweisung (nach Marke oder ';')",
+      "match": "(?:^\\s*|;\\s*|(?<=:)\\s*)([A-Za-z][A-Za-z0-9]*)\\b",
+      "captures": { "1": { "name": "keyword.other.instruction.hlasm" } }
+    },
+    {
+      "name": "variable.language.register.hlasm",
+      "match": "(?i)\\b[RF](1[0-5]|[0-9])\\b"
+    },
+    {
+      "name": "variable.language.result.hlasm",
+      "match": "(?i)\\b@?result\\b"
+    },
+    {
+      "name": "string.quoted.single.hlasm",
+      "match": "(?i)\\b[CXBFHAD]?'(?:[^']|'')*'"
+    },
+    {
+      "name": "constant.numeric.hlasm",
+      "match": "\\b[0-9]+\\b"
+    },
+    {
+      "name": "punctuation.separator.hlasm",
+      "match": "[(),]"
+    }
+  ]
+}

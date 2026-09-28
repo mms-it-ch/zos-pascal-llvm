@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "JES-Spool",
+  "scopeName": "text.jes.spool",
+  "patterns": [
+    { "name": "invalid.illegal.abend.spool", "match": "\\b(ABEND|S[0-9A-F]{3}|U[0-9]{4})\\b.*|\\bRuntime error [0-9]+.*|\\bJCL ERROR\\b.*|\\bNOT RUN\\b.*" },
+    { "name": "markup.error.message.spool", "match": "\\b[A-Z]{3,4}[0-9]{3,5}[ES]\\b.*" },
+    { "name": "markup.warning.message.spool", "match": "\\b[A-Z]{3,4}[0-9]{3,5}W\\b.*" },
+    { "name": "markup.info.message.spool", "match": "\\b(IEF142I|IEF404I|IEF403I|IEFA111I|\\$HASP[0-9]+)\\b" },
+    { "name": "constant.numeric.rc.spool", "match": "\\b(RC|COND CODE|MAXCC)[= ]*[0-9]{1,4}\\b" },
+    { "name": "entity.name.function.backtrace.spool", "match": "\\$[0-9A-F]{16}\\s+\\S+" },
+    { "name": "comment.line.jcl.spool", "match": "^\\s+[0-9]+ //\\*.*$" },
+    { "name": "string.jcl.spool", "match": "^\\s+[0-9]+ //.*$" }
+  ]
+}

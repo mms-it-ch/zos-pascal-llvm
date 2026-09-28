@@ -1,9 +1,24 @@
 # VS Code
 
-Editor: Erweiterung „Pascal“ (alefragnani.pascal; wird über `.vscode/extensions.json` vorgeschlagen).
-Wer Vervollständigung will: „Pascal Language Server“ (Lazarus-CodeTools) mit den FPC-Quellen
-`~/src/fpc` (Zweig `zos`). Übersetzen und z/OS laufen über Tasks (`.vscode/tasks.json`), alles in
-WSL mit den Skripten aus `scripts/`:
+## Erweiterung „z/OS Pascal“ (`vscode/`)
+
+Bauen: `cd vscode && npm install && npm run compile && npm run package`, dann in VS Code
+„Erweiterungen: Aus VSIX installieren…“ mit `vscode/zos-pascal-<version>.vsix`.
+
+- Syntaxfärbung: Pascal (Free Pascal/Delphi, Direktiven, `asm`-Blöcke in HLASM-Syntax), JCL,
+  JES-Spool (Meldungen, RC, Laufzeitfehler, Backtrace).
+- Befehle (Editor-Titel, Kontextmenüs, Befehlspalette): übersetzen (Strg+Umschalt+B), übersetzen
+  und ausführen im Terminal (Strg+F5), Batch-Job (PDSE, FTP/JES), JCL einreichen. Compilerfehler
+  unter „Probleme“, Spool öffnet sich im Editor.
+- Seitenleiste „z/OS“ → „JES-Jobs“: eigene Jobs mit Status und RC, Klick = Spool, Löschen mit
+  Rückfrage; automatisch aktualisieren über `zosPascal.jes.autoRefreshSeconds`.
+- JCL-Prüfung: JOB-Karte ohne `REGION=0M,LINES=500000`, Text in Spalte 72, Zeilen über 80.
+- Einstellungen `zosPascal.*`: Pfad der Toolchain (Standard: Arbeitsbereich mit `scripts/zfpc`),
+  WSL-Distribution, Compileroptionen (Standard `-gl`), Wartezeit für Jobs.
+- Nicht zusammen mit „Pascal“ (alefragnani.pascal) verwenden: beide färben die Sprache `pascal`.
+- Debugger: lokal mit gdb und für z/OS (in Arbeit).
+
+## Tasks (`.vscode/tasks.json`, ohne Erweiterung)
 
 | Task | macht |
 |---|---|

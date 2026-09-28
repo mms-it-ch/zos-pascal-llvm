@@ -1,4 +1,7 @@
 {
-  // Pascal im Editor (Syntax, Formatierung, Navigation). Übersetzen und z/OS: .vscode/tasks.json
-  "recommendations": ["alefragnani.pascal"]
+  // Die Erweiterung dieses Repos (vscode/, als .vsix installieren) bringt die Pascal-Färbung
+  // selbst mit; alefragnani.pascal färbt dieselbe Sprache "pascal" und würde sich mit ihr
+  // abwechseln.
+  "recommendations": [],
+  "unwantedRecommendations": ["alefragnani.pascal"]
 }
