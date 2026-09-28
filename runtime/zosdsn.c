@@ -295,3 +295,17 @@ int FPC_ZOS_DD_EXISTS(const char *dd)
       return 1;
   return 0;
 }
+
+/* Umwandlung IBM-1047 <-> ISO-8859-1 an Ort und Stelle (Unit zosebcdic),
+ * dieselben Tabellen wie für Textdateien (X'15' <-> LF) */
+void FPC_ZOS_E2A(unsigned char *p, long n)
+{
+  for (long i = 0; i < n; i++)
+    p[i] = e2a[p[i]];
+}
+
+void FPC_ZOS_A2E(unsigned char *p, long n)
+{
+  for (long i = 0; i < n; i++)
+    p[i] = a2e[p[i]];
+}

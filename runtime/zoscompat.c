@@ -111,3 +111,112 @@ void FPC_ZOS_BATCH_STDIO(void)
   if (getenv("ZOS_DSN_DEBUG"))
     fprintf(stderr, "FPC_ZOS_BATCH_STDIO:\n%s", dbg);
 }
+
+/* Unbenannte POSIX-Semaphoren (sem_init, sem_wait, ...) gibt es in der C-Laufzeit
+ * von z/OS nicht. Nachbildung mit Mutex und Condition Variable; sem_t (in
+ * rtl/zos/pthread.inc) ist ein Zeiger auf die Struktur. Nur innerhalb eines
+ * Prozesses (pshared wird nicht unterstützt). */
+#include <pthread.h>
+
+struct zsem {
+  pthread_mutex_t m;
+  pthread_cond_t c;
+  unsigned v;
+};
+
+int FPC_ZOS_SEM_INIT(void **sem, int pshared, unsigned value)
+{
+  struct zsem *s;
+  if (pshared) {
+    errno = ENOSYS;
+    return -1;
+  }
+  s = malloc(sizeof *s);
+  if (!s) {
+    errno = ENOMEM;
+    return -1;
+  }
+  pthread_mutex_init(&s->m, 0);
+  pthread_cond_init(&s->c, 0);
+  s->v = value;
+  *sem = s;
+  return 0;
+}
+
+int FPC_ZOS_SEM_DESTROY(void **sem)
+{
+  struct zsem *s = *sem;
+  if (!s) {
+    errno = EINVAL;
+    return -1;
+  }
+  pthread_cond_destroy(&s->c);
+  pthread_mutex_destroy(&s->m);
+  free(s);
+  *sem = 0;
+  return 0;
+}
+
+int FPC_ZOS_SEM_POST(void **sem)
+{
+  struct zsem *s = *sem;
+  pthread_mutex_lock(&s->m);
+  s->v++;
+  pthread_cond_signal(&s->c);
+  pthread_mutex_unlock(&s->m);
+  return 0;
+}
+
+int FPC_ZOS_SEM_WAIT(void **sem)
+{
+  struct zsem *s = *sem;
+  pthread_mutex_lock(&s->m);
+  while (s->v == 0)
+    pthread_cond_wait(&s->c, &s->m);
+  s->v--;
+  pthread_mutex_unlock(&s->m);
+  return 0;
+}
+
+int FPC_ZOS_SEM_TRYWAIT(void **sem)
+{
+  struct zsem *s = *sem;
+  int rc = 0;
+  pthread_mutex_lock(&s->m);
+  if (s->v == 0) {
+    errno = EAGAIN;
+    rc = -1;
+  } else
+    s->v--;
+  pthread_mutex_unlock(&s->m);
+  return rc;
+}
+
+int FPC_ZOS_SEM_TIMEDWAIT(void **sem, const struct timespec *abstime)
+{
+  struct zsem *s = *sem;
+  int rc = 0;
+  pthread_mutex_lock(&s->m);
+  while (s->v == 0) {
+    int e = pthread_cond_timedwait(&s->c, &s->m, abstime);
+    if (e != 0 && s->v == 0) {
+      /* z/OS meldet den Ablauf auch als -1 mit errno statt als Rückgabewert */
+      errno = (e == -1) ? errno : e;
+      rc = -1;
+      break;
+    }
+  }
+  if (rc == 0)
+    s->v--;
+  pthread_mutex_unlock(&s->m);
+  return rc;
+}
+
+int FPC_ZOS_SEM_GETVALUE(void **sem, int *sval)
+{
+  struct zsem *s = *sem;
+  pthread_mutex_lock(&s->m);
+  *sval = (int)s->v;
+  pthread_mutex_unlock(&s->m);
+  return 0;
+}

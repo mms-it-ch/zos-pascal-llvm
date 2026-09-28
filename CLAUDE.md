@@ -124,6 +124,11 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   (clang/clang++). Nur z/OS: tcse1/2 (Inline-Assembler), tfmtbcd (3: Literal ohne Extended),
   tstrutils2 (UTF-8), tiorte (rmdir('..') -> EINVAL statt ENOTEMPTY, POSIX erlaubt beides),
   tfile2 (fcntl-Sperren prozessweit). Aufruf: `fpc-testsuite.sh $(cat ~/subdirs.txt)`.
+- **PF7 Packages (FPC-Patches 0028/0029, 28.09.2026, `pf7/README.md`):** `build-packages.sh`
+  (am Ende von build-rtl.sh): 219 Units, zweiter Durchgang als Hilfs-Unit mit -B (sonst
+  "checksum changed"). Semaphoren nachgebildet (zoscompat.c, sem_t = Zeiger), Sockets
+  (rtl-extra/src/zos, gen-sockh.py, SOCK_HAS_SINLEN, addrinfo ai_eflags), Pipes: FIONREAD geht
+  nicht -> fstat st_size. Kindprozesse schreiben EBCDIC -> Unit zosebcdic. pkgtest 18/18.
 - **PF6 MVS-Datasets (FPC-Patch 0027, 28.09.2026, `pf6/README.md`):** Namen `//'DSN'`, `//NAME`,
   `DD:NAME` gehen in sysfile.inc an die C-Streams (`runtime/zosdsn.c`, eigene Handles ab
   X'7F000000'); Text = Textmodus + ISO-8859-1<->IBM-1047 (LF<->X'15'), binär = Bytestrom.

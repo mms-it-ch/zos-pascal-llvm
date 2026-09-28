@@ -1,0 +1,301 @@
+From d92278f84e9e03a32fe92bef1c0b529cb76944e2 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 10:51:05 +0200
+Subject: [PATCH 29/29] packages: z/OS support (pthreads, sockets, netdb,
+ pipes)
+
+- pthreads: use the declarations of the run time library
+  (rtl/zos/pthread.inc) and the usual names of the mutex types.
+- rtl-extra: osdefs.inc and unxsockh.inc for z/OS (constants generated
+  from the z/OS headers); sockaddr has a length byte (SOCK_HAS_SINLEN).
+  MSG_NOSIGNAL does not exist on z/OS (0).
+- cnetdb: struct addrinfo has ai_canonname before ai_addr and an
+  additional ai_eflags field, which getaddrinfo reads from the hints.
+- fcl-process: z/OS rejects FIONREAD on pipes (EINVAL); the number of
+  waiting bytes is st_size of fstat (RunCommand read nothing before).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ packages/fcl-net/src/cnetdb.pp          |   7 +-
+ packages/fcl-process/src/unix/pipes.inc |  14 ++-
+ packages/pthreads/src/pthreads.pp       |   9 ++
+ packages/rtl-extra/src/unix/sockets.pp  |   3 +-
+ packages/rtl-extra/src/zos/osdefs.inc   |  13 ++
+ packages/rtl-extra/src/zos/unxsockh.inc | 160 ++++++++++++++++++++++++
+ 6 files changed, 203 insertions(+), 3 deletions(-)
+ create mode 100644 packages/rtl-extra/src/zos/osdefs.inc
+ create mode 100644 packages/rtl-extra/src/zos/unxsockh.inc
+
+diff --git a/packages/fcl-net/src/cnetdb.pp b/packages/fcl-net/src/cnetdb.pp
+index 0d7df265..44f4fda2 100644
+--- a/packages/fcl-net/src/cnetdb.pp
++++ b/packages/fcl-net/src/cnetdb.pp
+@@ -240,7 +240,7 @@   protoent = record
+ {$if defined(LINUX) or defined(OPENBSD) or defined(DARWIN)}
+ {$define FIRST_ADDR_THEN_CANONNAME}
+ {$endif}
+-{$if defined(FREEBSD) or defined(NETBSD) or defined(DRAGONFLY) or defined(SOLARIS) or defined(ANDROID)}
++{$if defined(FREEBSD) or defined(NETBSD) or defined(DRAGONFLY) or defined(SOLARIS) or defined(ANDROID) or defined(ZOS)}
+ {$define FIRST_CANONNAME_THEN_ADDR}
+ {$endif}
+ {$if not defined(FIRST_CANONNAME_THEN_ADDR) and not defined(FIRST_ADDR_THEN_CANONNAME)}
+@@ -263,6 +263,11 @@   addrinfo = record
+     ai_canonname: PAnsiChar;   {* canonical name for hostname *}
+ {$endif}
+     ai_next: PAddrInfo;	   {* next structure in linked list *}
++{$ifdef ZOS}
++    { z/OS: source IP address preferences; getaddrinfo reads it from the
++      hints (the reserved int after ai_addrlen fills the alignment gap) }
++    ai_eflags: cInt;
++{$endif}
+   end;
+   TAddrInfo = addrinfo;
+   PPAddrInfo = ^PAddrInfo;
+diff --git a/packages/fcl-process/src/unix/pipes.inc b/packages/fcl-process/src/unix/pipes.inc
+index 158bcbe1..32b9f836 100644
+--- a/packages/fcl-process/src/unix/pipes.inc
++++ b/packages/fcl-process/src/unix/pipes.inc
+@@ -29,8 +29,20 @@
+ 
+ 
+ Function TInputPipeStream.GetNumBytesAvailable: DWord;
+-
++{$ifdef zos}
++var
++  st: stat;
++{$endif zos}
+ begin
++{$ifdef zos}
++  { z/OS rejects FIONREAD on pipes (EINVAL); fstat returns the number of
++    bytes waiting in a pipe as st_size }
++  if (fpfstat(Handle, st)=0) and fpS_ISFIFO(st.st_mode) then
++    begin
++      Result := st.st_size;
++      exit;
++    end;
++{$endif zos}
+   if fpioctl(Handle, FIONREAD, @Result)<0 then
+     Result := 0;
+ end;
+diff --git a/packages/pthreads/src/pthreads.pp b/packages/pthreads/src/pthreads.pp
+index ae65dd4b..07fef731 100644
+--- a/packages/pthreads/src/pthreads.pp
++++ b/packages/pthreads/src/pthreads.pp
+@@ -61,6 +61,15 @@ interface
+   {$else}
+     {$i pthrbeos.inc}
+   {$endif}
++{$elseif defined(zos)}
++  { the declarations of the run time library (rtl/zos/pthread.inc, also used by
++    cthreads) }
++  uses initc, ctypes, baseunix, unixtype;
++  {$i pthread.inc}
++  const
++    PTHREAD_MUTEX_NORMAL     = _PTHREAD_MUTEX_NORMAL;
++    PTHREAD_MUTEX_ERRORCHECK = _PTHREAD_MUTEX_ERRORCHECK;
++    PTHREAD_MUTEX_RECURSIVE  = _PTHREAD_MUTEX_RECURSIVE;
+ {$elseif defined(aix)}
+ {$IFDEF FPC_DOTTEDUNITS}
+   uses System.InitC, System.CTypes, UnixApi.Base, UnixApi.Types;
+diff --git a/packages/rtl-extra/src/unix/sockets.pp b/packages/rtl-extra/src/unix/sockets.pp
+index 28ee7123..f73def75 100644
+--- a/packages/rtl-extra/src/unix/sockets.pp
++++ b/packages/rtl-extra/src/unix/sockets.pp
+@@ -33,7 +33,8 @@
+      defined(FreeBSD) or
+      defined(Darwin) or
+      defined(Haiku) or
+-     defined(OpenBSD)
++     defined(OpenBSD) or
++     defined(zos)
+ }
+ {$DEFINE SOCK_HAS_SINLEN}               // BSD definition of socketaddr
+ {$endif}
+diff --git a/packages/rtl-extra/src/zos/osdefs.inc b/packages/rtl-extra/src/zos/osdefs.inc
+new file mode 100644
+index 00000000..f53b8379
+--- /dev/null
++++ b/packages/rtl-extra/src/zos/osdefs.inc
+@@ -0,0 +1,13 @@
++{
++    Target dependent defines used when compiling the units of rtl-extra: z/OS.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ ****************************************************************************}
++
++{ z/OS: only the C library, no system calls }
++{$define FPC_USE_LIBC}
+diff --git a/packages/rtl-extra/src/zos/unxsockh.inc b/packages/rtl-extra/src/zos/unxsockh.inc
+new file mode 100644
+index 00000000..d8400380
+--- /dev/null
++++ b/packages/rtl-extra/src/zos/unxsockh.inc
+@@ -0,0 +1,160 @@
++{
++   This file is part of the Free Pascal run time library.
++
++   OS dependant part of the header of the sockets unit: z/OS.
++   Generated by gen-sockh.py from the z/OS headers (sys/socket.h, netinet/in.h,
++   netinet/tcp.h, ...); names from the AIX version of this file.
++
++   See the file COPYING.FPC, included in this distribution,
++   for details about the copyright.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY;without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++}
++
++const
++  AF_UNSPEC = 0;
++  AF_UNIX = 1;
++  AF_INET = 2;
++  AF_IMPLINK = 3;
++  AF_PUP = 4;
++  AF_CHAOS = 5;
++  AF_NS = 6;
++  AF_ISO = 7;
++  AF_ECMA = 8;
++  AF_DATAKIT = 9;
++  AF_CCITT = $a;
++  AF_SNA = $b;
++  AF_DECnet = $c;
++  AF_DLI = $d;
++  AF_LAT = $e;
++  AF_HYLINK = $f;
++  AF_APPLETALK = $10;
++  AF_ROUTE = $14;
++  AF_LINK = $12;
++  AF_INTF = $14;
++  AF_RIF = $15;
++  AF_NETWARE = $16;
++  AF_NDD = $17;
++  AF_INET6 = $13;
++  AF_MAX = $12;
++  PF_UNSPEC = 0;
++  PF_UNIX = 1;
++  PF_INET = 2;
++  PF_IMPLINK = 3;
++  PF_PUP = 4;
++  PF_CHAOS = 5;
++  PF_NS = 6;
++  PF_ECMA = 8;
++  PF_DATAKIT = 9;
++  PF_CCITT = $a;
++  PF_SNA = $b;
++  PF_DECnet = $c;
++  PF_DLI = $d;
++  PF_LAT = $e;
++  PF_HYLINK = $f;
++  PF_APPLETALK = $10;
++  PF_ROUTE = $14;
++  PF_INET6 = $13;
++  SOMAXCONN = $a;
++  SOL_SOCKET = $ffff;
++  SO_DEBUG = 1;
++  SO_ACCEPTCONN = 2;
++  SO_REUSEADDR = 4;
++  SO_KEEPALIVE = 8;
++  SO_DONTROUTE = $10;
++  SO_BROADCAST = $20;
++  SO_USELOOPBACK = $40;
++  SO_LINGER = $80;
++  SO_OOBINLINE = $100;
++  SO_REUSEPORT = $200;
++  SO_USE_IFBUFS = $400;
++  SO_CKSUMRECV = $800;
++  SO_NOREUSEADDR = $1000;
++  SO_SNDBUF = $1001;
++  SO_RCVBUF = $1002;
++  SO_SNDLOWAT = $1003;
++  SO_RCVLOWAT = $1004;
++  SO_SNDTIMEO = $1005;
++  SO_RCVTIMEO = $1006;
++  SO_ERROR = $1007;
++  SO_TYPE = $1008;
++  SCM_RIGHTS = 1;
++  SHUT_RD = 0;
++  SHUT_WR = 1;
++  SHUT_RDWR = 2;
++  MSG_OOB = 1;
++  MSG_PEEK = 2;
++  MSG_DONTROUTE = 4;
++  MSG_EOR = 8;
++  MSG_TRUNC = $10;
++  MSG_CTRUNC = $20;
++  MSG_WAITALL = $40;
++  MSG_NONBLOCK = $4000;
++  MSG_MAXIOVLEN = $10;
++  TCP_NODELAY = 1;
++  IPPROTO_IP = 0;
++  IPPROTO_HOPOPTS = 0;
++  IPPROTO_ICMP = 1;
++  IPPROTO_GGP = 2;
++  IPPROTO_TCP = 6;
++  IPPROTO_EGP = 8;
++  IPPROTO_PUP = $c;
++  IPPROTO_UDP = $11;
++  IPPROTO_IDP = $16;
++  IPPROTO_IPV6 = $29;
++  IPPROTO_ROUTING = $2b;
++  IPPROTO_FRAGMENT = $2c;
++  IPPROTO_ESP = $32;
++  IPPROTO_AH = $33;
++  IPPROTO_ICMPV6 = $3a;
++  IPPROTO_NONE = $3b;
++  IPPROTO_DSTOPTS = $3c;
++  IPPROTO_RAW = $ff;
++  IPPROTO_MAX = $100;
++  IP_OPTIONS = 1;
++  IP_TOS = 2;
++  IP_TTL = $e;
++  IP_MULTICAST_IF = 7;
++  IP_MULTICAST_TTL = 3;
++  IP_MULTICAST_LOOP = 4;
++  IP_ADD_MEMBERSHIP = 5;
++  IP_DROP_MEMBERSHIP = 6;
++  IP_DEFAULT_MULTICAST_TTL = 1;
++  IP_DEFAULT_MULTICAST_LOOP = 1;
++  IPV6_UNICAST_HOPS = 3;
++  IPV6_MULTICAST_IF = 7;
++  IPV6_MULTICAST_HOPS = 9;
++  IPV6_MULTICAST_LOOP = 4;
++  IPV6_JOIN_GROUP = 5;
++  IPV6_LEAVE_GROUP = 6;
++  IPV6_PKTINFO = $d;
++  IPV6_RECVPKTINFO = $f;
++  IPV6_V6ONLY = $a;
++  IPV6_CHECKSUM = $13;
++  IPV6_HOPLIMIT = $b;
++  IPV6_RECVHOPLIMIT = $e;
++  IPV6_RECVTCLASS = $1f;
++  IPV6_TCLASS = $1e;
++  IPV6_USE_MIN_MTU = $12;
++  IPV6_DONTFRAG = $1d;
++  IPV6_PATHMTU = $c;
++  IPV6_RECVPATHMTU = $10;
++  IPV6_NEXTHOP = $14;
++  IPV6_RTHDR = $15;
++  IPV6_RECVRTHDR = $19;
++  IPV6_HOPOPTS = $16;
++  IPV6_RECVHOPOPTS = $1a;
++  IPV6_DSTOPTS = $17;
++  IPV6_RTHDRDSTOPTS = $18;
++  IPV6_RECVDSTOPTS = $1c;
++  MCAST_JOIN_GROUP = $28;
++  MCAST_LEAVE_GROUP = $29;
++  MCAST_BLOCK_SOURCE = $2c;
++  MCAST_UNBLOCK_SOURCE = $2d;
++  MCAST_JOIN_SOURCE_GROUP = $2a;
++  MCAST_LEAVE_SOURCE_GROUP = $2b;
++  MSG_NOSIGNAL = 0;               { not on z/OS }
++
++{ not defined on z/OS: AF_OSI pseudo_AF_XTP PF_ISO PF_OSI PF_LINK PF_XTP PF_RIF PF_INTF PF_NDD SO_KERNACCEPT SO_NOMULTIPATH SO_AUDIT SO_PEERID MSG_MPEG2 MSG_COMPAT TCP_MAXSEG TCP_KEEPALIVE TCP_NOTIFY_THRESHOLD TCP_ABORT_THRESHOLD TCP_CONN_NOTIFY_THRESHOLD TCP_CONN_ABORT_THRESHOLD TCP_RECVDSTADDR TCP_INIT_CWND TCP_KEEPALIVE_THRESHOLD TCP_KEEPALIVE_ABORT_THRESHOLD TCP_CORK IPPROTO_IGMP IPPROTO_IPIP IPPROTO_TP IPPROTO_QOS IPPROTO_RSVP IPPROTO_GRE IPPROTO_LOCAL IPPROTO_EON IPPROTO_BIP IPPROTO_SCTP IPPROTO_MH IP_HDRINCL IP_UNICAST_HOPS IP_RECVOPTS IP_RECVRETOPTS IP_RECVDSTADDR IP_RETOPTS IP_MULTICAST_HOPS IP_RECVMACHDR IP_RECVIFINFO IP_BROADCAST_IF IP_DHCPMODE IP_RECVIF IP_ADDRFORM IP_DONTFRAG IP_FINDPMTU IP_PMTUAGE IP_RECVINTERFACE IP_RECVTTL IP_INC_MEMBERSHIPS IP_INIT_MEMBERSHIP IPV6_ADD_MEMBERSHIP IPV6_DROP_MEMBERSHIP IPV6_ADDRFORM IPV6_NOPROBE IPV6_RECVSRCRT IPV6_RECVIF IPV6_SENDIF IPV6_RECVHOPS IPV6_PKTOPTIONS FLOW6_RAND ICMP6_FILTER IPV6_AIXRAWSOCKET }
+-- 
+2.43.0
+

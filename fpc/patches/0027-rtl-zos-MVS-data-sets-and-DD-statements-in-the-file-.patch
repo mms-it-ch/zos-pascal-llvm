@@ -1,7 +1,7 @@
 From a82a607c1c3bc82e67ad44c1e9ed6c1b6e615c02 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 10:05:58 +0200
-Subject: [PATCH 27/27] rtl/zos: MVS data sets and DD statements in the file
+Subject: [PATCH 27/29] rtl/zos: MVS data sets and DD statements in the file
  routines
 
 Names of the form //'HLQ.NAME', //'HLQ.PDS(MEMBER)', //NAME, //DD:NAME and

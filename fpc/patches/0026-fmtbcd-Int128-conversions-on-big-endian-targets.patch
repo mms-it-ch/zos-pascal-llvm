@@ -1,7 +1,7 @@
 From f94c58288046fe393325ebf6087eb2550576fce5 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 09:38:35 +0200
-Subject: [PATCH 26/27] fmtbcd: Int128 conversions on big endian targets
+Subject: [PATCH 26/29] fmtbcd: Int128 conversions on big endian targets
 
 Int128ToBCD and BCDToInt128 treated DWords[0] of Int128Rec as the least
 significant dword. On big endian targets it is the most significant one,
