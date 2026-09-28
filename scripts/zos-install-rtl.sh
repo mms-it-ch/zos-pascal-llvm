@@ -6,6 +6,9 @@
 # Lokal wird $U/.zos-installed mit der Prüfsumme der Objekte geschrieben; passt sie
 # nicht mehr (RTL neu gebaut), lädt zos-ld wieder die Objekte selbst hoch.
 set -e
+# ssh.exe/sftp.exe von Git für Windows (msys-Pfade aus .zos.env), auch wenn der Aufrufer
+# (z. B. VS Code) das Windows-OpenSSH zuerst im PATH hat
+G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
 SELF=$(readlink -f "$0")
 REPO=$(dirname "$SELF")/..
 PREFIX=${ZFPC_PREFIX:-$HOME/opt/zfpc}

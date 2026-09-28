@@ -231,7 +231,9 @@ export class ZosDebugSession implements vscode.DebugAdapter {
       sshArgs.push('-i', env.key);
     }
     sshArgs.push(env.host, remote);
-    const p = cp.spawn('ssh.exe', sshArgs, { windowsHide: true });
+    // wie die Skripte: ssh von Git für Windows, falls vorhanden (sonst das aus dem PATH)
+    const gitSsh = 'C:\Program Files\Git\usr\bin\ssh.exe';
+    const p = cp.spawn(fs.existsSync(gitSsh) ? gitSsh : 'ssh.exe', sshArgs, { windowsHide: true });
     this.proc = p;
     p.stdout?.setEncoding('latin1');
     p.stderr?.setEncoding('latin1');

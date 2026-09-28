@@ -22,6 +22,9 @@
 # (User-ID) ersetzt, damit sie nicht in der Datei steht. Definiert die Datei STDOUT oder
 # SYSPRINT (bzw. STDERR oder SYSOUT), entfallen beide PATH-DDs dieses Paars.
 set -e
+# ssh.exe/sftp.exe von Git für Windows (msys-Pfade aus .zos.env), auch wenn der Aufrufer
+# (z. B. VS Code) das Windows-OpenSSH zuerst im PATH hat
+G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
 ONLYJCL=0; JES=0
 [ "$1" = -n ] && { ONLYJCL=1; shift; }
 [ "$1" = -j ] && { ONLYJCL=1; JES=1; shift; }

@@ -3,6 +3,9 @@
 #   zos-sh 'befehl ...'
 # Läuft in WSL (ssh.exe von Git für Windows); Zugangsdaten aus .zos.env.
 SELF=$(readlink -f "$0")
+# ssh.exe/sftp.exe von Git für Windows (msys-Pfade aus .zos.env), auch wenn der Aufrufer
+# (z. B. VS Code) das Windows-OpenSSH zuerst im PATH hat
+G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
 ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
 WH=$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
 HOME=$WH . "$ENVFILE"

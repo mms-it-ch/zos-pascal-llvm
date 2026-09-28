@@ -16,6 +16,9 @@
 # Zugangsdaten: .zos.env im Repo (ZOS_HOST, ZOS_KEY, ZOS_DIR, ZOS_LEHLQ) oder $ZOS_ENV.
 # Läuft in WSL; benutzt ssh.exe/sftp.exe (Git für Windows), weil der Schlüssel dort liegt.
 set -e
+# ssh.exe/sftp.exe von Git für Windows (msys-Pfade aus .zos.env), auch wenn der Aufrufer
+# (z. B. VS Code) das Windows-OpenSSH zuerst im PATH hat
+G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
 KIND=$1; OUT=$2; LIST=$3
 [ -n "$LIST" ] || { echo "usage: zos-ld exe|dll <output> <linklist> [ld-options]" >&2; exit 2; }
 shift 3
@@ -173,6 +176,7 @@ fi
 cat > "$OUT" <<EOF
 #!/bin/sh
 # Startet $NAME auf z/OS (Arbeitsverzeichnis ZOS_DIR/run/$NAME), erzeugt von zos-ld
+G="\${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "\$G/ssh.exe" ] && PATH="\$G:\$PATH"
 ZOS_ENV=\${ZOS_ENV:-$ENVFILE}
 WH=\$(wslpath -u "\$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
 HOME=\$WH . "\$ZOS_ENV"
