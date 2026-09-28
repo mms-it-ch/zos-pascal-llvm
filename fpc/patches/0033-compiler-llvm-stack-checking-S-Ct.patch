@@ -1,7 +1,7 @@
 From 993acbf8aca708fa4107d43072b4329ff5352084 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 12:39:16 +0200
-Subject: [PATCH 33/34] compiler/llvm: stack checking ({$S+}, -Ct)
+Subject: [PATCH 33/35] compiler/llvm: stack checking ({$S+}, -Ct)
 
 The LLVM code generator did not emit the call to fpc_stackcheck at all,
 because the size of the stack frame cannot be passed the usual way. The

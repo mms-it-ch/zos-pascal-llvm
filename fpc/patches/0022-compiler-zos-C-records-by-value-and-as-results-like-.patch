@@ -1,7 +1,7 @@
 From 02e61375156230c5f361ad86d4c31216584d1eba Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 06:36:10 +0200
-Subject: [PATCH 22/34] compiler/zos: C records by value and as results like
+Subject: [PATCH 22/35] compiler/zos: C records by value and as results like
  clang (XPLINK-64)
 
 cdecl functions now pass and return records the way clang does for

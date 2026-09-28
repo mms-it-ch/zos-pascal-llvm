@@ -21,8 +21,16 @@ T=$WTMP/zfpc-rtl.$$.tar
 ( cd "$U" && tar --format=ustar -cf "$T" ./*.o )
 echo "put $(wslpath -m "$T") $DIR/rtl.tar" | sftp.exe -q $SSHOPT -b - "$ZOS_HOST" >/dev/null
 rm -f "$T"
-ssh.exe $SSHOPT "$ZOS_HOST" "cd $DIR && rm -rf rtl && mkdir -p rtl lib && cd rtl && pax -rf ../rtl.tar && \
-  rm -f ../lib/libfpc.a && ar -rc ../lib/libfpc.a *.o && cd .. && rm -rf rtl rtl.tar && ls -l lib/libfpc.a" \
-  | sed -E 's|/u/[A-Za-z0-9]+/|/u/<u>/|'
+# Archiv gleich nach dem Auspacken löschen (Platz im ZFS); bei einem Fehler (z. B. ZFS voll)
+# das eigene Zwischenzeug (rtl, rtl.tar) entfernen und abbrechen - libfpc.a bleibt dann alt
+OUT=$(ssh.exe $SSHOPT "$ZOS_HOST" "cd $DIR && rm -rf rtl && mkdir -p rtl lib && cd rtl && \
+  pax -rf ../rtl.tar && rm -f ../rtl.tar && rm -f ../lib/libfpc.a && ar -rc ../lib/libfpc.a *.o && \
+  cd .. && rm -rf rtl && ls -l lib/libfpc.a && echo INSTALL-OK || { cd $DIR; rm -rf rtl rtl.tar; df -k .; }" 2>&1 \
+  | sed -E 's|/u/[A-Za-z0-9]+/|/u/<u>/|g; s|\([A-Z0-9#$@]+\.|(<u>.|g')
+echo "$OUT" | grep -v INSTALL-OK
+if ! echo "$OUT" | grep -q INSTALL-OK; then
+  echo "FEHLER: RTL nicht installiert (Platz im ZFS? df oben)" >&2
+  exit 1
+fi
 ( cd "$U" && cat ./*.o | md5sum | cut -d' ' -f1 ) > "$U/.zos-installed"
 echo "RTL installiert ($(ls "$U"/*.o | wc -l) Objekte)"

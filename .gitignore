@@ -17,3 +17,4 @@ pf*/**/*.o
 pf*/**/*.so
 pf*/**/*.zlink
 pf*/**/*.dbgo
+pf*/**/ppas.sh

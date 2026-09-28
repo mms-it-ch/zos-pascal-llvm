@@ -1,7 +1,7 @@
 From 9410f5fc776377f71f9bc788f2be5cc95c7b6787 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 12:09:09 +0200
-Subject: [PATCH 32/34] rtl-extra: System V IPC (unit ipc) for z/OS
+Subject: [PATCH 32/35] rtl-extra: System V IPC (unit ipc) for z/OS
 
 z/OS gets its own interface part (ipczos.inc): layouts of ipc_perm,
 shmid_ds, msqid_ds, semid_ds and sembuf and the values of the constants,

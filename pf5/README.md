@@ -78,3 +78,36 @@ EDivByZero: Division by zero
 - Tests: `bt.pas` (2/2; `bt div`, `bt runerror` zeigen die Standardausgabe), `btthr.pas`
   (Ausnahme im Thread und im qsort-Callback durch LE-Frames: 2/2), `raiseperf.pas`: 20000
   Ausnahmen aus Tiefe 5 in 213 ms (~11 µs je Ausnahme inkl. Backtrace und Unwinding).
+
+## Inline-Assembler (FPC-Patch 0035, 28.09.2026)
+
+`asm … end` in HLASM-Syntax. Der Port hat keine eigenen Befehlstabellen: LLVM liest die
+Inline-Assembly selbst (auf z/OS im HLASM-Dialekt). Der Leser `compiler/s390x/rahlasm.pas`
+gibt jeden Befehl als Text weiter und ersetzt nur, was er kennt:
+
+| Im `asm`-Block | wird zu |
+|---|---|
+| `LOOP:` am Zeilenanfang | Marke, je Block eindeutig (`LOOP${:uid}`) |
+| `R0`..`R15`, `F0`..`F15` | Registernummer |
+| Pascal-Konstante, `TYP.FELD` | Wert bzw. Feldoffset |
+| Variable, Parameter, `RESULT` | `D(B)` bzw. `D(L,B)`, Adresse der Variablen in einem Register: `L 1,X`, `L 1,X+4`, `MVC R.C(8),SRC`, `LA 1,X` |
+
+- Ein Befehl je Zeile (oder `;`), Kommentare wie in Pascal. Leerzeichen in den Operanden
+  werden entfernt (HLASM beendet die Operanden am ersten Leerzeichen).
+- Globale Variablen gehen genauso (Adresse als Argument); `var`-Parameter: die Variable
+  enthält die Adresse (`LG 1,R` und dann `L 2,TREC.B(1)`).
+- Veränderte Register angeben: `end ['r1','r2'];` (ohne Liste gelten R0–R7 als verändert).
+- **Reine Assembler-Routinen** (`assembler; asm … end;`, im Modus Delphi auch ohne
+  `assembler`) werden nackte LLVM-Funktionen: kein Frame, Parameter und `RESULT` stehen für ihr
+  XPLINK-Register (1. bis 3. Parameter R1–R3, Ergebnis R3), den Rücksprung `B 2(7)` ergänzt
+  der Compiler. Sie dürfen nichts aufrufen (kein eigener Stack-Rahmen).
+- Nicht möglich: Indexregister zusammen mit einer Variablen (`X(2)` ist die Länge), Literale
+  (`=F'1'`), Sprünge zu Pascal-Marken, Aufrufe von Pascal-Routinen aus dem `asm`-Block.
+- Test `asmtest.pas` (Parameter, Result, Schleife mit Marke, globale Variable, Konstante,
+  var-Record mit Feldoffset, MVC/MVI/LA, reine Assembler-Funktion): 6/6 auf z/OS. Testsuite:
+  tb0072 (s390x-Variante ergänzt), tb0142, tb0283, tb0444, test/opt/tcse1, tcse2 laufen;
+  tb0193 hat keinen s390x-Zweig, tb0268 braucht die Unit `objects` (jetzt mit gebaut).
+- Bau-Hinweis: Jede Änderung am Interface von `s390x/aasmcpu.pas` führte beim Übersetzen des
+  Compilers zu unsinnigen Typfehlern um `treference` - Ursache waren veraltete `.ppu` in
+  `compiler/s390x/units` (`make clean` räumt sie nicht weg). Die Texte liegen trotzdem in
+  einer eigenen Unit (`hlasmtxt.pas`), `aasmcpu` bleibt unverändert.

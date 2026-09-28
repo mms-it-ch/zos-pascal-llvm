@@ -53,6 +53,7 @@ Thread, TInetSocket als Client).
   ExitCode wertete ihn ein zweites Mal aus - auch unter Linux). Behoben mit FPC-Patch 0030 (als
   Meldung an FPC vorbereitet, `fpc/upstream/05-process-exitcode.md`); `ExitStatus` ist jetzt der
   Rohstatus. Probe `procprobe.pas`.
+- `rtl-extra/src/inc` gehört seit 28.09.2026 dazu: objects, ucomplex, matrix, sortalgs, real48utils.
 - Nicht übersetzt (nicht z/OS oder fehlende Packages): gpm, serial, xmliconv (iconvenc),
   processunicode/fpsimpleservice (Windows), digesttestreport (libtar), rcreader/rcparser (lexlib),
   httpsvlt (HTTPBase).

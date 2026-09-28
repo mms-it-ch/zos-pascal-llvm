@@ -1,7 +1,7 @@
 From af895dbb71f89cbab52bc7638c6c33e5670aa953 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 08:54:52 +0200
-Subject: [PATCH 23/34] rtl/zos: backtraces with function names
+Subject: [PATCH 23/35] rtl/zos: backtraces with function names
 
 get_pc_addr, get_caller_addr and get_caller_frame returned a fixed fake
 address, so runtime errors and unhandled exceptions showed no usable

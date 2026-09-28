@@ -1,0 +1,861 @@
+From f77ae5fa67af663ffdc2b09ce5c5f8e393f974c6 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 13:50:49 +0200
+Subject: [PATCH 35/35] s390x: inline assembler (HLASM) for the LLVM code
+ generator
+
+The s390x port has no instruction tables of its own: LLVM parses the
+inline assembly (HLASM dialect on z/OS). The new reader rahlasm passes
+each statement on as text and only replaces what it knows: local labels
+(made unique with ${:uid}), R0..R15/F0..F15, Pascal constants, record
+field offsets, and variables, parameters and the function result, which
+become D(B) or D(L,B) operands with the address of the variable in a
+register (constraint "a"; global variables are passed by address too).
+
+Pure assembler routines become naked LLVM functions; parameters and
+RESULT stand for their XPLINK registers, g_proc_exit adds the return
+(B 2(7)), and there is no DWARF call frame information for them (LE
+unwinds with the PPA1). tb0072 gets an s390x variant.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/llvm/agllvm.pas    |  45 +++-
+ compiler/llvm/nllvmbas.pas  |  16 ++
+ compiler/s390x/cgcpu.pas    |  25 +-
+ compiler/s390x/cputarg.pas  |   8 +
+ compiler/s390x/hlasmtxt.pas | 108 ++++++++
+ compiler/s390x/rahlasm.pas  | 484 ++++++++++++++++++++++++++++++++++++
+ tests/tbs/tb0072.pp         |   7 +
+ 7 files changed, 688 insertions(+), 5 deletions(-)
+ create mode 100755 compiler/s390x/hlasmtxt.pas
+ create mode 100755 compiler/s390x/rahlasm.pas
+
+diff --git a/compiler/llvm/agllvm.pas b/compiler/llvm/agllvm.pas
+index 6ebc4305..61872729 100644
+--- a/compiler/llvm/agllvm.pas
++++ b/compiler/llvm/agllvm.pas
+@@ -122,7 +122,11 @@ implementation
+       objcasm,
+       aasmcnst,symconst,symtype,symdef,symtable,
+       llvmbase,itllvm,llvmdef,
+-      cgbase,cgutils,cpubase,cpuinfo,triplet,llvminfo,export;
++      cgbase,cgutils,cpubase,cpuinfo,triplet,llvminfo,export
++{$ifdef s390x}
++      ,aasmcpu,hlasmtxt
++{$endif s390x}
++      ;
+ 
+     const
+       line_length = 70;
+@@ -359,10 +363,14 @@ implementation
+              owner.writer.AsmWrite(llvmparatypeattr(' byval',para^.def,true));
+            if lcp_sret in para^.flags then
+              owner.writer.AsmWrite(llvmparatypeattr(' sret',para^.def,true));
++{$ifndef s390x}
++           { (s390x: the arguments are addresses in registers, not memory
++             operands) }
+            if asmblock and
+               (([llvmflag_opaque_ptr_transition,llvmflag_opaque_ptr]*llvmversion_properties[current_settings.llvmversion])<>[]) and
+               (para^.def.typ=pointerdef) then
+              owner.writer.AsmWrite(llvmparatypeattr(' elementtype',para^.def,true));
++{$endif s390x}
+            { For byval, this means "alignment on the stack" and of the passed source data.
+              For other pointer parameters, this means "alignment of the passed source data" }
+            if (para^.alignment<>std_param_align) or
+@@ -639,7 +647,12 @@        tdoubleval = record
+               accessed from assembly code in memory }
+             for i:=0 to taillvm(hp).oper[1]^.paras.Count-1 do
+               begin
++{$ifdef s390x}
++                { rahlasm: the address of the variable in a register }
++                owner.writer.AsmWrite('a,');
++{$else s390x}
+                 owner.writer.AsmWrite('=*m,');
++{$endif s390x}
+               end;
+             owner.writer.AsmWrite('~{memory},~{fpsr},~{flags}');
+             WriteAsmRegisterAllocationClobbers(taillvm(hp).oper[0]^.asmlist);
+@@ -1708,6 +1721,13 @@        tdoubleval = record
+             if not assigned(current_asmdata.asmlists[hal]) or
+                current_asmdata.asmlists[hal].Empty then
+               continue;
++{$ifdef s390x}
++            { no DWARF call frame information on z/OS (Language Environment
++              unwinds with the PPA1); only pure assembler routines generate
++              it, and there is no s390x assembler writer }
++            if hal=al_dwarf_frame then
++              continue;
++{$endif s390x}
+             writer.AsmWriteLn(asminfo^.comment+'Begin asmlist '+AsmlistTypeStr[hal]);
+             if hal<>al_dwarf_frame then
+               writetree(current_asmdata.asmlists[hal])
+@@ -1734,9 +1754,32 @@        tdoubleval = record
+     procedure TLLVMAssember.WriteFunctionInlineAsmList(list: tasmlist);
+       var
+         a: TExternalAssembler;
++{$ifdef s390x}
++        hp: tai;
++        first: boolean;
++{$endif s390x}
+       begin
+         if not assigned(ffuncinlasmdecorator) then
+           ffuncinlasmdecorator:=TLLVMFunctionInlineAssemblyDecorator.create;
++{$ifdef s390x}
++        { no assembler writer for s390x: the reader (rahlasm) keeps the
++          statements as text }
++        first:=true;
++        hp:=tai(list.first);
++        while assigned(hp) do
++          begin
++            if (hp.typ=ait_instruction) and
++               hlasm_is(taicpu(hp)) then
++              begin
++                if not first then
++                  writer.AsmWrite('\0A');
++                writer.AsmWrite(ffuncinlasmdecorator.LineFilter(hlasm_line(taicpu(hp))));
++                first:=false;
++              end;
++            hp:=tai(hp.next);
++          end;
++        exit;
++{$endif s390x}
+         if assigned(writer.decorator) then
+           internalerror(2016110201);
+         writer.decorator:=ffuncinlasmdecorator;
+diff --git a/compiler/llvm/nllvmbas.pas b/compiler/llvm/nllvmbas.pas
+index 820c6b9e..eb1d8677 100644
+--- a/compiler/llvm/nllvmbas.pas
++++ b/compiler/llvm/nllvmbas.pas
+@@ -124,6 +124,9 @@        tllvmtempcreatenode = class(tcgtempcreatenode)
+ {$ifdef x86}
+         scale : byte;
+ {$endif x86}
++{$ifdef s390x}
++        callpara: pllvmcallpara;
++{$endif s390x}
+       begin
+         { pure assembler routines are handled by the regular code generator }
+         if po_assembler in current_procinfo.procdef.procoptions then
+@@ -172,6 +175,19 @@        tllvmtempcreatenode = class(tcgtempcreatenode)
+                   internalerror(2016101506);
+               end;
+             end;
++{$ifdef s390x}
++          top_ref:
++            { rahlasm: global variables are passed by address too }
++            if assigned(op.ref^.symbol) and
++               (op.ref^.base=NR_NO) and
++               (op.ref^.index=NR_NO) then
++              begin
++                new(callpara,init(voidpointertype,std_param_align,lve_none,[]));
++                callpara^.loadsym(op.ref^.symbol);
++                fsymboldata.add(callpara);
++                op.ref^.symbol:=current_asmdata.RefAsmSymbol('`'+tostr(fsymboldata.count-1),AT_DATA,false);
++              end;
++{$endif s390x}
+           else
+             ;
+         end;
+diff --git a/compiler/s390x/cgcpu.pas b/compiler/s390x/cgcpu.pas
+index 0e023f09..52146851 100644
+--- a/compiler/s390x/cgcpu.pas
++++ b/compiler/s390x/cgcpu.pas
+@@ -74,7 +74,7 @@       tcgs390x = class(tcg)
+ implementation
+ 
+     uses
+-      verbose;
++      verbose,rgobj,hlasmtxt;
+ 
+     procedure unsupported;
+       begin
+@@ -86,11 +86,20 @@ implementation
+     procedure tcgs390x.init_register_allocators;
+       begin
+         inherited init_register_allocators;
++        { only used for the parameters and the result of pure assembler
++          routines }
++        rg[R_INTREGISTER]:=trgobj.create(R_INTREGISTER,R_SUBWHOLE,
++            [RS_R1,RS_R2,RS_R3,RS_R0,RS_R5,RS_R6,RS_R8,RS_R9,RS_R10,
++             RS_R11,RS_R12,RS_R13,RS_R14],first_int_imreg,[]);
++        rg[R_FPUREGISTER]:=trgobj.create(R_FPUREGISTER,R_SUBWHOLE,
++            [RS_F0,RS_F2,RS_F4,RS_F6,RS_F1,RS_F3,RS_F5,RS_F7],first_fpu_imreg,[]);
+       end;
+ 
+ 
+     procedure tcgs390x.done_register_allocators;
+       begin
++        rg[R_INTREGISTER].free;
++        rg[R_FPUREGISTER].free;
+         inherited done_register_allocators;
+       end;
+ 
+@@ -203,13 +212,21 @@ implementation
+ 
+     procedure tcgs390x.g_proc_entry(list : TAsmList;localsize : longint;nostackframe:boolean);
+       begin
+-        unsupported;
++        { pure assembler routines (the only ones generated by this code
++          generator) become naked LLVM functions without a frame }
+       end;
+ 
+ 
+     procedure tcgs390x.g_proc_exit(list : TAsmList;parasize:longint;nostackframe:boolean);
+-      begin
+-        unsupported;
++      var
++        ai: taicpu;
++      begin
++        { pure assembler routines (the only ones generated by this code
++          generator) become naked LLVM functions: return to the caller
++          (XPLINK: return address in R7) }
++        ai:=hlasm_new;
++        hlasm_settext(ai,' B 2(7)');
++        list.concat(ai);
+       end;
+ 
+ 
+diff --git a/compiler/s390x/cputarg.pas b/compiler/s390x/cputarg.pas
+index b28321f0..8e2e22e6 100644
+--- a/compiler/s390x/cputarg.pas
++++ b/compiler/s390x/cputarg.pas
+@@ -39,6 +39,14 @@ implementation
+       ,t_zos
+     {$endif}
+ 
++{**************************************
++             Assembler Readers
++**************************************}
++
++  {$ifndef NoRaHlasm}
++       ,rahlasm
++  {$endif NoRaHlasm}
++
+ {**************************************
+              Assemblers
+ **************************************}
+diff --git a/compiler/s390x/hlasmtxt.pas b/compiler/s390x/hlasmtxt.pas
+new file mode 100755
+index 00000000..7aef53c4
+--- /dev/null
++++ b/compiler/s390x/hlasmtxt.pas
+@@ -0,0 +1,108 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Text of the s390x inline assembler statements (see rahlasm)
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit hlasmtxt;
++
++{ An inline assembler statement is a taicpu with opcode A_None. Its text is
++  kept in a table, the index is the last operand (a constant), so that
++  copies of the instruction (getcopy) keep it. #1 followed by
++  chr(ord('0')+n) in the text stands for the address register of operand n;
++  tllvmasmnode.ResolveRef turns these operands into the arguments of the
++  inline assembly. }
++
++{$i fpcdefs.inc}
++
++interface
++
++    uses
++      aasmcpu;
++
++    { create the statement; load the operands before calling hlasm_settext }
++    function hlasm_new: taicpu;
++    procedure hlasm_settext(ai: taicpu; const s: ansistring);
++    function hlasm_is(ai: taicpu): boolean;
++    { the statement for the LLVM inline assembly template }
++    function hlasm_line(ai: taicpu): ansistring;
++
++implementation
++
++    uses
++      verbose,aasmtai,cpubase;
++
++    var
++      hltexts: array of ansistring;
++      hlcount: longint;
++
++
++    function hlasm_new: taicpu;
++      begin
++        result:=taicpu.op_none(A_None);
++      end;
++
++
++    procedure hlasm_settext(ai: taicpu; const s: ansistring);
++      begin
++        if hlcount>=length(hltexts) then
++          setlength(hltexts,hlcount*2+64);
++        hltexts[hlcount]:=s;
++        ai.loadconst(ai.ops,hlcount);
++        ai.ops:=ai.ops+1;
++        inc(hlcount);
++      end;
++
++
++    function hlasm_is(ai: taicpu): boolean;
++      begin
++        result:=(ai.opcode=A_None) and
++          (ai.ops>0) and
++          (ai.oper[ai.ops-1]^.typ=top_const);
++      end;
++
++
++    function hlasm_line(ai: taicpu): ansistring;
++      var
++        s: ansistring;
++        i,n: longint;
++      begin
++        result:='';
++        s:=hltexts[ai.oper[ai.ops-1]^.val];
++        i:=1;
++        while i<=length(s) do
++          begin
++            if s[i]=#1 then
++              begin
++                inc(i);
++                n:=ord(s[i])-ord('0');
++                { resolved by tllvmasmnode.ResolveRef into the placeholder
++                  of an inline assembly argument }
++                if (n>=ai.ops-1) or
++                   (ai.oper[n]^.typ<>top_ref) or
++                   not assigned(ai.oper[n]^.ref^.symbol) then
++                  internalerror(2026092801);
++                result:=result+ai.oper[n]^.ref^.symbol.name;
++              end
++            else
++              result:=result+s[i];
++            inc(i);
++          end;
++      end;
++
++end.
+diff --git a/compiler/s390x/rahlasm.pas b/compiler/s390x/rahlasm.pas
+new file mode 100755
+index 00000000..ddb007da
+--- /dev/null
++++ b/compiler/s390x/rahlasm.pas
+@@ -0,0 +1,484 @@
++{
++    Copyright (c) 2026 by the Free Pascal development team
++
++    Inline assembler reader for s390x (z/OS): HLASM statements
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++
++ ****************************************************************************
++}
++unit rahlasm;
++
++{ The s390x port only has the LLVM code generator, and LLVM parses the
++  inline assembly itself (HLASM dialect on z/OS). This reader therefore does
++  not know any instructions: it passes each statement on as text and only
++  replaces the names it knows:
++
++    label:                 local label (made unique per assembler block)
++    R0..R15, F0..F15       register numbers
++    Pascal constants       their value
++    variables, parameters  D(B) or D(L,B) with the address of the variable in
++                           a register: "L 1,X", "L 1,X+4", "MVC X(8),Y",
++                           "L 1,REC.FIELD", "LA 1,X" (address)
++    RESULT                 the function result
++    TYPE.FIELD             offset of the field
++
++  Pure assembler routines (naked functions, the compiler adds the return
++  "B 2(7)"): parameters and RESULT stand for their XPLINK register.
++
++  One statement per line (or separated by ';'). Blanks are removed from the
++  operands, since HLASM ends the operands at the first blank; comments are
++  the usual Pascal ones. }
++
++{$i fpcdefs.inc}
++
++interface
++
++    uses
++      cclasses,
++      rabase;
++
++    type
++      ts390xhlasmreader = class(tbaseasmreader)
++        function Assemble: tlinkedlist; override;
++      end;
++
++implementation
++
++    uses
++      cutils,verbose,globtype,globals,systems,
++      scanner,
++      symconst,symbase,symtype,symsym,symdef,defutil,pbase,parabase,
++      aasmbase,aasmtai,aasmdata,aasmcpu,hlasmtxt,
++      cgbase,cgutils,cpubase,procinfo,rautils;
++
++    type
++      ttokkind = (tk_ident,tk_number,tk_text,tk_colon);
++      ttok = record
++        kind: ttokkind;
++        s: ansistring;
++      end;
++      tline = record
++        toks: array of ttok;
++        fileinfo: tfileposinfo;
++      end;
++
++
++    function regnumber(const u: string; out n: longint): boolean;
++      var
++        code: longint;
++      begin
++        result:=false;
++        if (length(u)<2) or (length(u)>3) or not(u[1] in ['R','F']) then
++          exit;
++        val(copy(u,2,2),n,code);
++        result:=(code=0) and (n>=0) and (n<=15) and (u[2] in ['0'..'9']);
++      end;
++
++
++    function ts390xhlasmreader.Assemble: tlinkedlist;
++      var
++        curlist: TAsmList;
++        lines: array of tline;
++        labels: TFPHashList;
++        c: char;
++        nlines: longint;
++
++      procedure addtok(k: ttokkind; const s: ansistring);
++        var
++          n: longint;
++        begin
++          if nlines=0 then
++            begin
++              inc(nlines);
++              setlength(lines,nlines);
++              lines[nlines-1].fileinfo:=current_filepos;
++            end;
++          n:=length(lines[nlines-1].toks);
++          setlength(lines[nlines-1].toks,n+1);
++          lines[nlines-1].toks[n].kind:=k;
++          lines[nlines-1].toks[n].s:=s;
++        end;
++
++      procedure endline;
++        begin
++          { start a new line only if the current one is not empty }
++          if (nlines=0) or (length(lines[nlines-1].toks)<>0) then
++            begin
++              inc(nlines);
++              setlength(lines,nlines);
++            end;
++          current_scanner.gettokenpos;
++          lines[nlines-1].fileinfo:=current_filepos;
++        end;
++
++      procedure readblock;
++        var
++          s: ansistring;
++        begin
++          c:=current_scanner.c;
++          repeat
++            case c of
++              ' ',#9:
++                c:=current_scanner.asmgetchar;
++              #10,#13:
++                begin
++                  current_scanner.linebreak;
++                  c:=current_scanner.asmgetchar;
++                  endline;
++                end;
++              ';':
++                begin
++                  c:=current_scanner.asmgetchar;
++                  endline;
++                end;
++              '{':
++                begin
++                  current_scanner.skipcomment(true);
++                  c:=current_scanner.c;
++                end;
++              '/':
++                begin
++                  c:=current_scanner.asmgetchar;
++                  if c='/' then
++                    begin
++                      current_scanner.skipdelphicomment;
++                      c:=current_scanner.c;
++                    end
++                  else
++                    addtok(tk_text,'/');
++                end;
++              '(':
++                begin
++                  c:=current_scanner.asmgetchar;
++                  if c='*' then
++                    begin
++                      current_scanner.skipoldtpcomment(true);
++                      c:=current_scanner.c;
++                    end
++                  else
++                    addtok(tk_text,'(');
++                end;
++              '''':
++                begin
++                  { HLASM string (C'..', X'..'); '' stands for a quote }
++                  s:='''';
++                  repeat
++                    c:=current_scanner.asmgetchar;
++                    if c in [#10,#13,#26] then
++                      begin
++                        Message(scan_f_string_exceeds_line);
++                        break;
++                      end;
++                    s:=s+c;
++                    if c='''' then
++                      begin
++                        c:=current_scanner.asmgetchar;
++                        if c<>'''' then
++                          break;
++                        s:=s+c;
++                      end;
++                  until false;
++                  addtok(tk_text,s);
++                end;
++              'A'..'Z','a'..'z','_','@','#','$':
++                begin
++                  s:='';
++                  repeat
++                    s:=s+c;
++                    c:=current_scanner.asmgetchar;
++                  until not(c in ['A'..'Z','a'..'z','0'..'9','_','@','#','$','.']);
++                  if upper(s)='END' then
++                    exit;
++                  addtok(tk_ident,s);
++                end;
++              '0'..'9':
++                begin
++                  s:='';
++                  repeat
++                    s:=s+c;
++                    c:=current_scanner.asmgetchar;
++                  until not(c in ['0'..'9']);
++                  addtok(tk_number,s);
++                end;
++              ':':
++                begin
++                  addtok(tk_colon,':');
++                  c:=current_scanner.asmgetchar;
++                end;
++              #26:
++                begin
++                  Message(scan_f_end_of_file);
++                  exit;
++                end;
++              else
++                begin
++                  addtok(tk_text,c);
++                  c:=current_scanner.asmgetchar;
++                end;
++            end;
++          until false;
++        end;
++
++      function hlasm(const s: ansistring): taicpu;
++        begin
++          result:=hlasm_new;
++          hlasm_settext(result,s);
++        end;
++
++      { register of a parameter or of the result of a pure assembler routine }
++      function regoperand(const u: string; out n: longint): boolean;
++        var
++          sym: tsym;
++          srsymtable: tsymtable;
++          loc: pcgparalocation;
++        begin
++          result:=false;
++          loc:=nil;
++          if (u='RESULT') or (u='@RESULT') then
++            begin
++              if not is_void(current_procinfo.procdef.returndef) then
++                loc:=current_procinfo.procdef.funcretloc[calleeside].location;
++            end
++          else
++            begin
++              asmsearchsym(u,sym,srsymtable);
++              if assigned(sym) and (sym.typ=paravarsym) then
++                loc:=tparavarsym(sym).paraloc[calleeside].location;
++            end;
++          if assigned(loc) and
++             not assigned(loc^.next) and
++             (loc^.loc in [LOC_REGISTER,LOC_FPUREGISTER]) then
++            begin
++              n:=getsupreg(loc^.register);
++              result:=true;
++            end;
++        end;
++
++      function islabel(const l: tline): boolean;
++        begin
++          result:=(length(l.toks)>=2) and (l.toks[0].kind=tk_ident) and
++            (l.toks[1].kind=tk_colon);
++        end;
++
++      procedure genline(const l: tline; var pendinglabel: ansistring);
++        var
++          i,j,opidx,code: longint;
++          text,ops,u,len: ansistring;
++          value,fieldofs,fieldsize: tcgint;
++          mangledname: string;
++          hastypecast: boolean;
++          oper: TOperand;
++          opsyms: array[0..max_operands-1] of record
++            sym: tsym;
++            asmsym: tasmsymbol;
++          end;
++          ai: taicpu;
++          ref: treference;
++          disp: tcgint;
++          base: string;
++        begin
++          i:=0;
++          if islabel(l) then
++            begin
++              { two labels in a row }
++              if pendinglabel<>'' then
++                curlist.concat(hlasm(pendinglabel+' NOPR 0'));
++              pendinglabel:=upper(l.toks[0].s)+'`{:uid}';
++              i:=2;
++            end;
++          if i>=length(l.toks) then
++            exit;
++          if l.toks[i].kind<>tk_ident then
++            begin
++              Message1(asmr_e_invalid_opcode_and_operand,l.toks[i].s);
++              exit;
++            end;
++          text:=pendinglabel+' '+upper(l.toks[i].s);
++          pendinglabel:='';
++          inc(i);
++          ops:='';
++          opidx:=0;
++          while i<length(l.toks) do
++            begin
++              u:=upper(l.toks[i].s);
++              if l.toks[i].kind<>tk_ident then
++                ops:=ops+l.toks[i].s
++              else if assigned(labels.find(u)) then
++                ops:=ops+u+'`{:uid}'
++              else if regnumber(u,j) then
++                ops:=ops+tostr(j)
++              else if SearchIConstant(u,value) then
++                ops:=ops+tostr(value)
++              else
++                begin
++                  oper:=TOperand.create;
++                  j:=pos('.',u);
++                  if j=0 then
++                    base:=u
++                  else
++                    base:=copy(u,1,j-1);
++                  if po_assembler in current_procinfo.procdef.procoptions then
++                    begin
++                      { pure assembler routine: parameters and the result
++                        stand for their register }
++                      if regoperand(u,j) then
++                        ops:=ops+tostr(j)
++                      else
++                        Message1(asmr_e_local_para_unreachable,l.toks[i].s);
++                      oper.free;
++                      inc(i);
++                      continue;
++                    end;
++                  if (base='RESULT') or (base='@RESULT') then
++                    oper.SetupResult
++                  else
++                    oper.SetupVar(base,false);
++                  disp:=0;
++                  if (j<>0) and (oper.opr.typ in [OPR_LOCAL,OPR_REFERENCE]) then
++                    begin
++                      if not GetRecordOffsetSize(u,fieldofs,fieldsize,mangledname,false,hastypecast) then
++                        Message(asmr_e_invalid_reference_syntax);
++                      disp:=fieldofs;
++                    end
++                  else if (j<>0) and SearchRecordType(base) and
++                    GetRecordOffsetSize(u,fieldofs,fieldsize,mangledname,false,hastypecast) then
++                    begin
++                      { TYPE.FIELD: offset of the field }
++                      ops:=ops+tostr(fieldofs);
++                      oper.free;
++                      inc(i);
++                      continue;
++                    end;
++                  case oper.opr.typ of
++                    OPR_LOCAL:
++                      begin
++                        inc(disp,oper.opr.localsymofs+oper.opr.localconstoffset);
++                        opsyms[opidx].sym:=oper.opr.localsym;
++                        opsyms[opidx].asmsym:=nil;
++                      end;
++                    OPR_REFERENCE:
++                      begin
++                        if not assigned(oper.opr.ref.symbol) or
++                           (oper.opr.ref.base<>NR_NO) or
++                           (oper.opr.ref.index<>NR_NO) then
++                          Message(asmr_e_invalid_reference_syntax);
++                        inc(disp,oper.opr.ref.offset+oper.opr.constoffset);
++                        opsyms[opidx].sym:=nil;
++                        opsyms[opidx].asmsym:=oper.opr.ref.symbol;
++                      end;
++                    OPR_NONE:
++                      begin
++                        { not a Pascal name: leave it to the assembler }
++                        ops:=ops+u;
++                        oper.free;
++                        inc(i);
++                        continue;
++                      end;
++                    else
++                      begin
++                        Message(asmr_e_wrong_sym_type);
++                        oper.free;
++                        inc(i);
++                        continue;
++                      end;
++                  end;
++                  oper.free;
++                  { the last operand is the text }
++                  if opidx>=max_operands-1 then
++                    begin
++                      Message(asmr_e_too_many_operands);
++                      break;
++                    end;
++                  { X+n, X-n }
++                  while (i+2<length(l.toks)) and
++                        ((l.toks[i+1].s='+') or (l.toks[i+1].s='-')) and
++                        (l.toks[i+2].kind=tk_number) do
++                    begin
++                      val(l.toks[i+2].s,value,code);
++                      if l.toks[i+1].s='+' then
++                        inc(disp,value)
++                      else
++                        dec(disp,value);
++                      inc(i,2);
++                    end;
++                  { X(L): length for SS instructions }
++                  len:='';
++                  if (i+3<length(l.toks)) and (l.toks[i+1].s='(') and
++                     (l.toks[i+3].s=')') then
++                    begin
++                      len:=l.toks[i+2].s+',';
++                      inc(i,3);
++                    end;
++                  ops:=ops+tostr(disp)+'('+len+#1+chr(ord('0')+opidx)+')';
++                  inc(opidx);
++                end;
++              inc(i);
++            end;
++          if ops<>'' then
++            text:=text+' '+ops;
++          ai:=hlasm_new;
++          ai.fileinfo:=l.fileinfo;
++          for j:=0 to opidx-1 do
++            if assigned(opsyms[j].sym) then
++              ai.loadlocal(j,opsyms[j].sym,0,NR_NO,0,false,false)
++            else
++              begin
++                reference_reset_symbol(ref,opsyms[j].asmsym,0,1,[]);
++                ai.loadref(j,ref);
++              end;
++          ai.ops:=opidx;
++          hlasm_settext(ai,text);
++          curlist.concat(ai);
++        end;
++
++      var
++        i: longint;
++        pendinglabel: ansistring;
++      begin
++        Message1(asmr_d_start_reading,'HLASM');
++        curlist:=TAsmList.Create;
++        { we might need to know which parameters are passed in registers }
++        if not parse_generic then
++          current_procinfo.generate_parameter_info;
++        lines:=nil;
++        nlines:=0;
++        readblock;
++        labels:=TFPHashList.Create;
++        for i:=0 to nlines-1 do
++          if islabel(lines[i]) then
++            labels.add(upper(lines[i].toks[0].s),pointer(1));
++        pendinglabel:='';
++        for i:=0 to nlines-1 do
++          genline(lines[i],pendinglabel);
++        { label at the end of the block }
++        if pendinglabel<>'' then
++          curlist.concat(hlasm(pendinglabel+' NOPR 0'));
++        labels.free;
++        result:=curlist;
++      end;
++
++
++const
++  asmmode_s390x_standard_info : tasmmodeinfo =
++    (
++      id    : asmmode_standard;
++      idtxt : 'STANDARD';
++      casmreader : ts390xhlasmreader;
++    );
++
++initialization
++  RegisterAsmMode(asmmode_s390x_standard_info);
++end.
+diff --git a/tests/tbs/tb0072.pp b/tests/tbs/tb0072.pp
+index fa883c4a..bd9f3eb5 100644
+--- a/tests/tbs/tb0072.pp
++++ b/tests/tbs/tb0072.pp
+@@ -31,6 +31,13 @@ procedure nothing(x,y: longint);assembler;
+   mr r6,y
+ end;
+ {$endif CPUPOWERPC}
++{$ifdef CPUS390X}
++{$define SUPPORTED}
++asm
++  LR 0,x
++  LR 6,y
++end;
++{$endif CPUS390X}
+ {$ifdef CPUARM}
+ {$define SUPPORTED}
+ asm
+-- 
+2.43.0
+

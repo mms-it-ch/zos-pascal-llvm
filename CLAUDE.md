@@ -121,7 +121,7 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   `array of const` bei cdecl-Varargs: Compiler-Absturz), 0025 (statvfs statt statfs, FileSetDate
   per Handle über futimes, ENOTEMPTY -> 5), 0026 (fmtbcd Int128 auf Big-Endian, allgemein),
   RTL-Units unicodedata/character (test/units/character 36/36), C/C++-Objekte für test/cg
-  (clang/clang++). Nur z/OS: tcse1/2 (Inline-Assembler), tfmtbcd (3: Literal ohne Extended),
+  (clang/clang++). Nur z/OS: tcse1/2 (Inline-Assembler, seit Patch 0035 ok), tfmtbcd (3: Literal ohne Extended),
   tstrutils2 (UTF-8), tiorte (rmdir('..') -> EINVAL statt ENOTEMPTY, POSIX erlaubt beides),
   tfile2 (fcntl-Sperren prozessweit). Aufruf: `fpc-testsuite.sh $(cat ~/subdirs.txt)`.
 - **PF7 Packages (FPC-Patches 0028/0029, 28.09.2026, `pf7/README.md`):** `build-packages.sh`
@@ -172,12 +172,12 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   (Capturer vorab in parentfpstruct, `tcgprocinfo.move_capturer_to_parentfpstruct`), neue
   Threads übernehmen FPU-Maske (DefaultFPUControlWord), Event-Mutex nicht rekursiv
   (z/OS: pthread_cond_timedwait scheitert sofort mit rekursivem Mutex).
-- **Verbleibende Fehler, eingeordnet:** Plattform: Inline-Assembler (7), DLL/library (PF4, 7),
+- **Verbleibende Fehler, eingeordnet:** Plattform: Inline-Assembler (7; seit Patch 0035 bis auf tb0193 ohne s390x-Zweig ok), DLL/library (PF4, 7),
   Lesen über nil (tabsvr6/7, tw9073), fcntl-Sperren prozessweit (tw27998, wie AIX/Solaris),
   UTF-8-Konsole (twide3/6, tunistr6, tcpstr27), Little-Endian-Annahme (tw41210a), Codegröße
   zwischen Labels (tw39785, tw38267b), /etc/host* (tw1255), Scheduler (tatomicmt u. a.),
-  Stack-Prüfung {$S+}/-Ct nicht umgesetzt (tw40598, tstack: LE vergrößert den Stack bis zum
-  CPU-Limit), Testfehler Big-Endian (tb0662: @Integer als PSizeInt). Allgemeine FPC-Fehler
+  Stack-Prüfung {$S+}/-Ct: seit FPC-Patch 0033 umgesetzt (28.09.2026, tw40598 und tstack
+  bestehen: Laufzeitfehler 202 statt Stackwachstum bis zum CPU-Limit), Testfehler Big-Endian (tb0662: @Integer als PSizeInt). Allgemeine FPC-Fehler
   ohne x87 (Currency: tw40550, tw41865g/h bei -O4). FPC-LLVM-Grenze: tsuperregister 16 Bit,
   eine Prozedur mit ~13000 Zeilen braucht mehr virtuelle Register (tw2242).
 - **FPC-Patch 0017 / Skripte (28.09.2026):** `-k`-Optionen gehen über zos-ld an ld (testlderror);
@@ -210,7 +210,7 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
 
 ## Nächste Schritte
 1. PF3: FPC-Testsuite (`~/src/fpc/tests`) auf z/OS. **tbs (27.09.2026): 772/784 ok, Referenz
-   x86_64-linux 777/784.** Nur z/OS: 5 × Inline-Assembler (LLVM-Ziel ohne Assembler-Leser),
+   x86_64-linux 777/784.** Nur z/OS: 5 × Inline-Assembler (seit Patch 0035 HLASM-Leser, `pf5/README.md`),
    tb0582 (library → PF4), tb0662 (Testfehler: `@I` Integer als PSizeInt, auf Big-Endian
    riesige Länge). **tbf 316/319 (Ref. 318), webtbf 546/554 (Ref. 547)**: tb0110 (skipcpu ohne
    s390x), uw40621 (Hilfs-Unit); tb0265 war ein Absturz im FPC-LLVM-Codegenerator (behoben,
@@ -223,7 +223,9 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    Objekt ohne DWARF + `.dbgo`-Beiwagen (zos-irc), Zeilentabelle beim Binden
    (`scripts/goff-lines.py` → `zzz_lines.o`, leer: `zoslines0.o`), s. `pf5/README.md`.
    zos-ld: `.zos.env` wird mit `HOME=$WH .` eingelesen, das ändert HOME dauerhaft (dash) →
-   WSL-Pfade über `$UHOME`. Noch offen aus der Liste des Nutzers: Inline-Assembler,
+   WSL-Pfade über `$UHOME`. **Inline-Assembler (HLASM, Patch 0035)**: `pf5/README.md`,
+   `pf5/asmtest.pas` 6/6. Compilerbau: `make clean` lässt `compiler/s390x/units/*.ppu` stehen →
+   bei seltsamen Typfehlern das Verzeichnis leeren. Noch offen aus der Liste des Nutzers:
    Lesezugriffe über nil (PSA ab Adresse 0 ist lesbar).
 3. **Meldungen an FPC (28.09.2026, `fpc/upstream/`):** 5 Issue-Texte + 7 eigenständige Patches gegen
    FPC main b19181d6 (Zweig `upstream-fixes`, Worktree `~/src/fpc-upstream`). Einreichen muss der

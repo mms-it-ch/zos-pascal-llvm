@@ -45,7 +45,7 @@ PPC="$PREFIX/bin/ppcs390x -Tzos -Clv17.0 -n -FD$PREFIX/bin -FU$U -Fu$U $SP -Fi$F
 #    ("checksum changed", z. B. generics.collections/generics.defaults).
 ok=0; failed=""; units=""
 for p in $PKGS; do
-  case "$p" in */src/*) srcdirs="$p" ;; *) srcdirs="$p/src $p/src/unix" ;; esac
+  case "$p" in */src/*) srcdirs="$p" ;; *) srcdirs="$p/src $p/src/inc $p/src/unix" ;; esac
   for d in $srcdirs; do
     for f in "$P/$d"/*.pp "$P/$d"/*.pas; do
       [ -f "$f" ] || continue
