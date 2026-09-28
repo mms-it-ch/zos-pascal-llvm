@@ -124,6 +124,14 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   (clang/clang++). Nur z/OS: tcse1/2 (Inline-Assembler), tfmtbcd (3: Literal ohne Extended),
   tstrutils2 (UTF-8), tiorte (rmdir('..') -> EINVAL statt ENOTEMPTY, POSIX erlaubt beides),
   tfile2 (fcntl-Sperren prozessweit). Aufruf: `fpc-testsuite.sh $(cat ~/subdirs.txt)`.
+- **PF6 MVS-Datasets (FPC-Patch 0027, 28.09.2026, `pf6/README.md`):** Namen `//'DSN'`, `//NAME`,
+  `DD:NAME` gehen in sysfile.inc an die C-Streams (`runtime/zosdsn.c`, eigene Handles ab
+  X'7F000000'); Text = Textmodus + ISO-8859-1<->IBM-1047 (LF<->X'15'), binär = Bytestrom.
+  Stolpersteine: fileno = -1 bei Datasets; `"w"` legt ein vorhandenes Dataset mit
+  Standardattributen neu an (-> `recfm=*`); Satzmodus füllt FB mit X'00' (-> Textmodus);
+  `fopen("DD:X")` gelingt ohne DD (-> TIOT prüfen); fileno ist für DD:SYSPRINT >= 0 (->
+  fldata __dsorgHFS). Batch: STDIN/SYSIN, STDOUT/SYSPRINT, STDERR. `zos-batch.sh`:
+  `ZOS_BATCH_DD` (weitere DDs, `@HLQ@`), `ZOS_BATCH_CEEOPTS`. Test-Datasets `<Präfix>.ZPAS.TEST.*`.
 - **Backtraces (FPC-Patch 0023, 28.09.2026, `pf5/README.md`):** get_caller_addr/-frame über den
   LE-Dienst `__le_traceback` (DSA = R4 = get_frame - 2048), Ende bei FPC_SYSTEMMAIN bzw. LE,
   Namen aus dem PPA1 in BackTraceStrFunc. Eigener EPM-Schritt scheiterte am Thread-Stack-Ende

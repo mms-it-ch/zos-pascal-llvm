@@ -1,0 +1,291 @@
+From a82a607c1c3bc82e67ad44c1e9ed6c1b6e615c02 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 10:05:58 +0200
+Subject: [PATCH 27/27] rtl/zos: MVS data sets and DD statements in the file
+ routines
+
+Names of the form //'HLQ.NAME', //'HLQ.PDS(MEMBER)', //NAME, //DD:NAME and
+DD:NAME refer to MVS data sets and DD statements. They have no file
+descriptors, so Do_Open, Do_Read, Do_Write, Do_Close, Do_Seek,
+Do_FilePos, Do_SeekEnd, Do_FileSize, Do_Erase and Do_Rename pass them to
+the C streams (runtime/zosdsn.c, handles of their own). Text files use
+the text mode of the C library (one record per line) with conversion
+between ISO-8859-1 and IBM-1047, binary files a byte stream. Attributes
+for new data sets can follow the name after a comma (fopen syntax).
+
+In batch, standard input/output/error are taken from the DD statements
+STDIN/SYSIN, STDOUT/SYSPRINT and STDERR also if they are not z/OS UNIX
+files (SYSOUT=*, data sets, DD *).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/unix/sysfile.inc | 133 +++++++++++++++++++++++++++++++++++++++++++
+ rtl/zos/sysos.inc    |   3 +
+ rtl/zos/system.pp    |  16 ++++++
+ 3 files changed, 152 insertions(+)
+
+diff --git a/rtl/unix/sysfile.inc b/rtl/unix/sysfile.inc
+index dbde9dc7..15147df3 100644
+--- a/rtl/unix/sysfile.inc
++++ b/rtl/unix/sysfile.inc
+@@ -17,6 +17,14 @@
+ var
+   res: cint;
+ Begin
++{$ifdef zos}
++  if zos_dsn_handle(Handle)<>0 then
++    begin
++      if zos_dsn_close(Handle)<>0 then
++        Errno2Inoutres;
++      exit;
++    end;
++{$endif zos}
+   repeat
+     res:=Fpclose(cint(Handle));
+   until (res<>-1) or (geterrno<>ESysEINTR);
+@@ -28,6 +36,16 @@
+ var
+  fileinfo : stat;
+ Begin
++{$ifdef zos}
++  if zos_dsn_name(p)<>0 then
++    begin
++      if zos_dsn_erase(p)<>0 then
++        Errno2Inoutres
++      else
++        InOutRes:=0;
++      exit;
++    end;
++{$endif zos}
+   { verify if the filename is actually a directory }
+   { if so return error and do nothing, as defined  }
+   { by POSIX                                       }
+@@ -52,6 +70,14 @@ procedure do_truncate (handle:thandle;fpos:int64);
+ begin
+   { should be simulated in cases where it is not }
+   { available.                                   }
++{$ifdef zos}
++  { data sets cannot be truncated }
++  if zos_dsn_handle(handle)<>0 then
++    begin
++      InOutRes:=5;
++      exit;
++    end;
++{$endif zos}
+   If Fpftruncate(handle,fpos)<0 Then
+    Errno2Inoutres
+   Else
+@@ -62,6 +88,16 @@ procedure do_truncate (handle:thandle;fpos:int64);
+ 
+ Procedure Do_Rename(p1,p2:PAnsiChar; p1changeable, p2changeable: boolean);
+ Begin
++{$ifdef zos}
++  if zos_dsn_name(p1)<>0 then
++    begin
++      if zos_dsn_rename(p1,p2)<>0 then
++        Errno2Inoutres
++      else
++        InOutRes:=0;
++      exit;
++    end;
++{$endif zos}
+   If Fprename(p1,p2)<0 Then
+    Errno2Inoutres
+   Else
+@@ -73,6 +109,20 @@ procedure do_truncate (handle:thandle;fpos:int64);
+ 
+ var j : cint;
+ Begin
++{$ifdef zos}
++  if zos_dsn_handle(Handle)<>0 then
++    begin
++      Do_Write:=zos_dsn_write(Handle,addr,len);
++      if Do_Write<0 then
++        begin
++          Errno2InOutRes;
++          Do_Write:=0;
++        end
++      else
++        InOutRes:=0;
++      exit;
++    end;
++{$endif zos}
+   repeat
+     Do_Write:=Fpwrite(Handle,addr,len);
+     j:=geterrno;
+@@ -92,6 +142,20 @@ procedure do_truncate (handle:thandle;fpos:int64);
+ var j:cint;
+ 
+ Begin
++{$ifdef zos}
++  if zos_dsn_handle(Handle)<>0 then
++    begin
++      Do_Read:=zos_dsn_read(Handle,addr,len);
++      if Do_Read<0 then
++        begin
++          Errno2InOutRes;
++          Do_Read:=0;
++        end
++      else
++        InOutRes:=0;
++      exit;
++    end;
++{$endif zos}
+   repeat
+     Do_Read:=Fpread(Handle,addr,len);
+     j:=geterrno;
+@@ -107,6 +171,11 @@ procedure do_truncate (handle:thandle;fpos:int64);
+ 
+ function Do_FilePos(Handle: thandle):Int64;
+ Begin
++{$ifdef zos}
++  if zos_dsn_handle(Handle)<>0 then
++    do_FilePos:=zos_dsn_tell(Handle)
++  else
++{$endif zos}
+   do_FilePos:=Fplseek(Handle, 0, SEEK_CUR);
+   If Do_FilePos<0 Then
+     Errno2InOutRes
+@@ -116,6 +185,16 @@ function Do_FilePos(Handle: thandle):Int64;
+ 
+ Procedure Do_Seek(Handle:thandle;Pos:Int64);
+ Begin
++{$ifdef zos}
++  if zos_dsn_handle(Handle)<>0 then
++    begin
++      if zos_dsn_seek(Handle,pos,SEEK_SET)<0 then
++        Errno2Inoutres
++      else
++        InOutRes:=0;
++      exit;
++    end;
++{$endif zos}
+   If Fplseek(Handle, pos, SEEK_SET)<0 Then
+    Errno2Inoutres
+   Else
+@@ -124,6 +203,11 @@ function Do_FilePos(Handle: thandle):Int64;
+ 
+ Function Do_SeekEnd(Handle:thandle):Int64;
+ begin
++{$ifdef zos}
++  if zos_dsn_handle(Handle)<>0 then
++    Do_SeekEnd:=zos_dsn_seek(Handle,0,SEEK_END)
++  else
++{$endif zos}
+   Do_SeekEnd:=Fplseek(Handle,0,SEEK_END);
+   If Do_SeekEnd<0 Then
+    Errno2Inoutres
+@@ -136,6 +220,20 @@ function Do_FilePos(Handle: thandle):Int64;
+   Info : Stat;
+   Ret  : Longint;
+ Begin
++{$ifdef zos}
++  if zos_dsn_handle(Handle)<>0 then
++    begin
++      Do_FileSize:=zos_dsn_size(Handle);
++      if Do_FileSize<0 then
++        begin
++          Errno2InOutRes;
++          Do_FileSize:=0;
++        end
++      else
++        InOutRes:=0;
++      exit;
++    end;
++{$endif zos}
+   Ret:=Fpfstat(handle,info);
+   If Ret=0 Then
+    Do_FileSize:=Info.st_size
+@@ -162,6 +260,9 @@ function Do_FilePos(Handle: thandle):Int64;
+               S_IWOTH OR S_IROTH;
+ var
+   oflags : cint;
++{$ifdef zos}
++  dsnmode : cint;
++{$endif zos}
+ Begin
+ { close first if opened }
+   if ((flags and $10000)=0) then
+@@ -215,6 +316,38 @@ function Do_FilePos(Handle: thandle):Int64;
+      end;
+      exit;
+    end;
++{$ifdef zos}
++  { MVS data set or DD statement: C stream (text files: records <-> lines,
++    ISO-8859-1 <-> IBM-1047), see zosdsn.c }
++  if zos_dsn_name(p)<>0 then
++    begin
++      if (flags and $1000)<>0 then
++        begin
++          if (flags and 3)=2 then
++            dsnmode:=4
++          else
++            dsnmode:=1;
++        end
++      else if (flags and $100)<>0 then
++        dsnmode:=3
++      else if (flags and 3)=0 then
++        dsnmode:=0
++      else if (flags and 3)=2 then
++        dsnmode:=2
++      else
++        dsnmode:=1;
++      FileRec(f).Handle:=zos_dsn_open(p,dsnmode,ord((flags and $10000)<>0));
++      if FileRec(f).Handle<0 then
++        begin
++          FileRec(f).Handle:=UnusedHandle;
++          Errno2Inoutres;
++          FileRec(f).mode:=fmclosed;
++        end
++      else
++        InOutRes:=0;
++      exit;
++    end;
++{$endif zos}
+ { real open call }
+   repeat
+     FileRec(f).Handle:=Fpopen(p,oflags,MODE_OPEN);
+diff --git a/rtl/zos/sysos.inc b/rtl/zos/sysos.inc
+index 37741411..5d57cf4b 100644
+--- a/rtl/zos/sysos.inc
++++ b/rtl/zos/sysos.inc
+@@ -101,6 +101,9 @@ function do_isdevice(handle:longint):boolean;
+ var
+   StatRec: Stat;
+ begin
++  { data sets and DD statements (zosdsn.c) are no devices }
++  if zos_dsn_handle(handle)<>0 then
++    exit(false);
+   fpFStat (Handle, StatRec);
+   case StatRec.st_Mode and S_IFMT of
+    S_IFCHR, S_IFIFO, S_IFSOCK: Do_IsDevice := true
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+index 4a8a2fb2..b1692660 100644
+--- a/rtl/zos/system.pp
++++ b/rtl/zos/system.pp
+@@ -40,6 +40,22 @@ interface
+ 
+ {$I sysunixh.inc}
+ 
++{ MVS data sets and DD statements (names //'HLQ.NAME', //NAME, //DD:NAME,
++  DD:NAME) have no file descriptors; the file routines (sysfile.inc) pass
++  them to the C streams (runtime/zosdsn.c) }
++{$L zosdsn.o}
++function zos_dsn_name(p: PAnsiChar): longint; cdecl; external name 'FPC_ZOS_DSN_NAME';
++function zos_dsn_handle(h: longint): longint; cdecl; external name 'FPC_ZOS_DSN_HANDLE';
++function zos_dsn_open(p: PAnsiChar; mode, text: longint): longint; cdecl; external name 'FPC_ZOS_DSN_OPEN';
++function zos_dsn_read(h: longint; buf: pointer; n: int64): int64; cdecl; external name 'FPC_ZOS_DSN_READ';
++function zos_dsn_write(h: longint; buf: pointer; n: int64): int64; cdecl; external name 'FPC_ZOS_DSN_WRITE';
++function zos_dsn_close(h: longint): longint; cdecl; external name 'FPC_ZOS_DSN_CLOSE';
++function zos_dsn_seek(h: longint; pos: int64; whence: longint): int64; cdecl; external name 'FPC_ZOS_DSN_SEEK';
++function zos_dsn_tell(h: longint): int64; cdecl; external name 'FPC_ZOS_DSN_TELL';
++function zos_dsn_size(h: longint): int64; cdecl; external name 'FPC_ZOS_DSN_SIZE';
++function zos_dsn_erase(p: PAnsiChar): longint; cdecl; external name 'FPC_ZOS_DSN_ERASE';
++function zos_dsn_rename(p1, p2: PAnsiChar): longint; cdecl; external name 'FPC_ZOS_DSN_RENAME';
++
+ var argc:longint;
+     argv:PPAnsiChar;
+     envp:PPAnsiChar;
+-- 
+2.43.0
+

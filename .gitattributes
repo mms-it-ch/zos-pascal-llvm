@@ -15,3 +15,6 @@ fpc/patches/*.patch -text
 llvm/patches/*.patch -text
 *.out text eol=lf
 runtime/*.c text eol=lf
+# JCL-Bausteine: LF (ein CR am Zeilenende wäre in der JCL ein Fehler)
+*.dd text eol=lf
+*.jcl text eol=lf

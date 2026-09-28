@@ -15,6 +15,10 @@
 #
 # Umgebung: .zos.env (ZOS_HOST, ZOS_KEY, ZOS_DIR, ZOS_PASLIB), ZOS_BATCH_WAIT (Sekunden,
 # Standard 300), ZOS_JOBCLASS (A), ZOS_MSGCLASS (X).
+# ZOS_BATCH_DD=datei: weitere DD-Anweisungen für den Programmschritt (z. B. SYSIN DD *,
+# SYSPRINT auf ein Dataset, Eingabe-/Ausgabe-Datasets); @HLQ@ wird durch das Präfix
+# (User-ID) ersetzt, damit sie nicht in der Datei steht. Definiert die Datei STDOUT oder
+# SYSPRINT (bzw. STDERR oder SYSOUT), entfallen beide PATH-DDs dieses Paars.
 set -e
 ONLYJCL=0
 [ "$1" = -n ] && { ONLYJCL=1; shift; }
@@ -39,6 +43,14 @@ SFTP=${ZOS_SFTP:-sftp.exe}
 SSHOPT="-i $KEY -o BatchMode=yes"
 # Jobname: User-ID (bis 7 Zeichen) + 'P'
 USERID=$(echo "${HOST%%@*}" | tr a-z A-Z | cut -c1-7)
+HLQ=$(echo "${HOST%%@*}" | tr a-z A-Z)
+EXTRA=""
+if [ -n "$ZOS_BATCH_DD" ]; then
+  [ -f "$ZOS_BATCH_DD" ] || { echo "zos-batch: $ZOS_BATCH_DD fehlt" >&2; exit 2; }
+  EXTRA=$(sed "s/@HLQ@/$HLQ/g" "$ZOS_BATCH_DD")
+fi
+# DD-Name in den zusätzlichen DD-Anweisungen definiert?
+has_dd() { printf '%s\n' "$EXTRA" | grep -qE "^//$1 +DD "; }
 JOB=${USERID}P
 B=$DIR/batch
 TAG=$MEMBER.$$
@@ -57,13 +69,20 @@ jcl() {
   echo "//STEPLIB  DD DISP=SHR,DSN=$PASLIB"
   echo "//CEEOPTS  DD *"
   echo "POSIX(ON)"
+  # weitere LE-Optionen, z. B. ZOS_BATCH_CEEOPTS="ENVAR('ZOS_DSN_DEBUG=1')"
+  [ -n "$ZOS_BATCH_CEEOPTS" ] && echo "$ZOS_BATCH_CEEOPTS"
   echo "/*"
   for dd in STDOUT:out STDERR:err SYSPRINT:out SYSOUT:err; do
     name=${dd%%:*}; ext=${dd#*:}
+    case $name in
+      STDOUT|SYSPRINT) { has_dd STDOUT || has_dd SYSPRINT; } && continue ;;
+      STDERR|SYSOUT) { has_dd STDERR || has_dd SYSOUT; } && continue ;;
+    esac
     printf '//%-8s DD PATH='"'"'%s'"'"',\n' "$name" "$B/$TAG.$ext"
     echo "//            PATHOPTS=(OWRONLY,OCREAT,OAPPEND),"
     echo "//            PATHMODE=(SIRUSR,SIWUSR)"
   done
+  [ -n "$EXTRA" ] && printf '%s\n' "$EXTRA"
   echo "//CEEDUMP  DD SYSOUT=*"
   n=0
   rcstep() {  # Bedingung, Text
