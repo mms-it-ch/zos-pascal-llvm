@@ -1,7 +1,7 @@
 From df5c2d31842bdbef2f37930f64085f902d75c461 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 10:51:05 +0200
-Subject: [PATCH 28/30] rtl/zos: semaphores, FIONREAD, unit zosebcdic
+Subject: [PATCH 28/31] rtl/zos: semaphores, FIONREAD, unit zosebcdic
 
 - The z/OS C library has no unnamed POSIX semaphores (sem_init, ...);
   they are emulated with a mutex and a condition variable

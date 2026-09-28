@@ -53,7 +53,7 @@ for u in objpas/objpas.pp inc/strings.pp unix/sysutils.pp objpas/math.pp \
          inc/getopts.pp unix/dos.pp "$RC/unix/crt.pp" inc/iso7185.pp inc/extpas.pp inc/macpas.pp \
          unix/cwstring.pp unix/cthreads.pp inc/lnfodwrf.pp \
          inc/heaptrc.pp inc/uuchar.pp inc/cmem.pp \
-         objpas/unicodedata.pas objpas/character.pas zos/zosebcdic.pp \
+         objpas/unicodedata.pas objpas/character.pas zos/zosebcdic.pp zos/zosrecio.pp \
          "$RO/strutils.pp" "$RO/dateutils.pp" "$RO/variants.pp" "$RO/varutils.pp" \
          "$RO/fmtbcd.pp" "$RO/rtti.pp" "$RO/nullable.pp" "$RO/tuples.pp"; do
   case "$u" in /*) src=$u ;; *) src=$R/$u ;; esac

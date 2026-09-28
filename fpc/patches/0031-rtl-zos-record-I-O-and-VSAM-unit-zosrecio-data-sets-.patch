@@ -1,0 +1,240 @@
+From 7a0e7d06db0a83af8fbdc648ede9ea0582f67a8f Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 12:00:25 +0200
+Subject: [PATCH 31/31] rtl/zos: record I/O and VSAM (unit zosrecio), data sets
+ in SysUtils
+
+- New unit zosrecio: records of MVS data sets and VSAM clusters (KSDS,
+  ESDS, RRDS) through the C library (type=record): read, write, locate by
+  key, update and delete; record format and key from fldata.
+- SysUtils.FileExists, DeleteFile and RenameFile handle data set names
+  (//'HLQ.NAME', //NAME, DD:NAME).
+- Libraries: dsntype=library / dsntype=pds in the attributes of a new
+  data set allocate the PDSE / PDS with dynalloc first (runtime/zosdsn.c).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/unix/sysutils.pp |  13 ++++
+ rtl/zos/system.pp    |   1 +
+ rtl/zos/zosrecio.pp  | 159 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 173 insertions(+)
+ create mode 100755 rtl/zos/zosrecio.pp
+
+diff --git a/rtl/unix/sysutils.pp b/rtl/unix/sysutils.pp
+index 83ec08cf..8bd79784 100644
+--- a/rtl/unix/sysutils.pp
++++ b/rtl/unix/sysutils.pp
+@@ -772,6 +772,11 @@ function FileGetSymLinkTarget(const FileName: RawByteString; out SymLinkRec: TRa
+   if Filename='' then
+     Exit(False);
+   SystemFileName:=ToSingleByteFileSystemEncodedFileName(FileName);
++{$ifdef zos}
++  { MVS data set, member or DD statement (//'HLQ.NAME', DD:NAME) }
++  if zos_dsn_name(PAnsiChar(SystemFileName))<>0 then
++    Exit(zos_dsn_exists(PAnsiChar(SystemFileName))<>0);
++{$endif zos}
+   // Don't use stat. It fails on files >2 GB.
+   // Access obeys the same access rules, so the result should be the same.
+   FileExists:=fpAccess(pointer(SystemFileName),F_OK)=0;
+@@ -1275,6 +1280,10 @@ function zos_futimes(fd: cint; const times: TZosTimeValArr): cint; cdecl; extern
+   SystemFileName: RawByteString;
+ begin
+   SystemFileName:=ToSingleByteFileSystemEncodedFileName(FileName);
++{$ifdef zos}
++  if zos_dsn_name(PAnsiChar(SystemFileName))<>0 then
++    Exit(zos_dsn_erase(PAnsiChar(SystemFileName))=0);
++{$endif zos}
+   Result:=fpUnLink (PAnsiChar(SystemFileName))>=0;
+ end;
+ 
+@@ -1285,6 +1294,10 @@ function zos_futimes(fd: cint; const times: TZosTimeValArr): cint; cdecl; extern
+ begin
+   SystemOldName:=ToSingleByteFileSystemEncodedFileName(OldName);
+   SystemNewName:=ToSingleByteFileSystemEncodedFileName(NewName);
++{$ifdef zos}
++  if zos_dsn_name(PAnsiChar(SystemOldName))<>0 then
++    Exit(zos_dsn_rename(PAnsiChar(SystemOldName),PAnsiChar(SystemNewName))=0);
++{$endif zos}
+   RenameFile:=BU.FpRename(pointer(SystemOldName),pointer(SystemNewName))>=0;
+ end;
+ 
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+index b1692660..9a9315b6 100644
+--- a/rtl/zos/system.pp
++++ b/rtl/zos/system.pp
+@@ -55,6 +55,7 @@ function zos_dsn_tell(h: longint): int64; cdecl; external name 'FPC_ZOS_DSN_TELL
+ function zos_dsn_size(h: longint): int64; cdecl; external name 'FPC_ZOS_DSN_SIZE';
+ function zos_dsn_erase(p: PAnsiChar): longint; cdecl; external name 'FPC_ZOS_DSN_ERASE';
+ function zos_dsn_rename(p1, p2: PAnsiChar): longint; cdecl; external name 'FPC_ZOS_DSN_RENAME';
++function zos_dsn_exists(p: PAnsiChar): longint; cdecl; external name 'FPC_ZOS_DSN_EXISTS';
+ 
+ var argc:longint;
+     argv:PPAnsiChar;
+diff --git a/rtl/zos/zosrecio.pp b/rtl/zos/zosrecio.pp
+new file mode 100755
+index 00000000..ed4df178
+--- /dev/null
++++ b/rtl/zos/zosrecio.pp
+@@ -0,0 +1,159 @@
++{
++    This file is part of the Free Pascal run time library.
++
++    z/OS: record oriented access to MVS data sets and VSAM clusters
++    (KSDS, ESDS, RRDS) through the C library (type=record, flocate,
++    fupdate, fdelrec). Each read or write transfers exactly one record;
++    the data is not converted (use unit zosebcdic for text in EBCDIC).
++
++    Names as for Assign: //'HLQ.NAME', //'HLQ.PDS(MEMBER)', //NAME (with
++    the TSO prefix), //DD:DDNAME, DD:DDNAME.
++
++    See the file COPYING.FPC, included in this distribution,
++    for details about the copyright.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++
++ **********************************************************************}
++unit zosrecio;
++
++{$mode objfpc}{$H+}
++
++interface
++
++type
++  TRecOpenMode = (
++    romRead,      { read records }
++    romUpdate,    { read, update, delete, insert (VSAM) or rewrite in place }
++    romWrite,     { new contents (existing attributes are kept) }
++    romAppend);   { add records at the end }
++
++  TRecLocate = (
++    rlKeyEqual,   { first record with this key (KSDS), RBA (ESDS) or number (RRDS) }
++    rlKeyGreaterEqual,
++    rlFirst,      { first record }
++    rlLast);      { last record }
++
++  TRecFormat = (rfFixed, rfVariable, rfUndefined, rfVSAM);
++
++  TVSAMType = (vtNone, vtESDS, vtKSDS, vtRRDS);
++
++  TRecFile = record
++    Handle: longint;
++    Format: TRecFormat;
++    MaxLength: longint;     { LRECL (maximum record length) }
++    VSAMType: TVSAMType;
++    KeyLength: longint;     { KSDS }
++    KeyOffset: longint;     { KSDS: position of the key in the record }
++  end;
++
++{ All functions return false (or -1) on an error; RecLastError returns the
++  errno value of the C library then. }
++function RecOpen(out f: TRecFile; const name: RawByteString; mode: TRecOpenMode): boolean;
++{ Read the next record into buf (at most size bytes). Result: length of the
++  record, -1 at the end of the data set or on an error (RecLastError <> 0). }
++function RecRead(var f: TRecFile; var buf; size: longint): longint;
++function RecWrite(var f: TRecFile; const buf; len: longint): boolean;
++{ Position for the next RecRead (VSAM; rlFirst/rlLast also for other data sets). }
++function RecLocate(var f: TRecFile; const key; keylen: longint; how: TRecLocate): boolean;
++{ Replace or delete the record read last (VSAM, opened with romUpdate). }
++function RecUpdate(var f: TRecFile; const buf; len: longint): boolean;
++function RecDelete(var f: TRecFile): boolean;
++function RecClose(var f: TRecFile): boolean;
++function RecLastError: longint;
++
++implementation
++
++{ runtime/zosdsn.c }
++function zos_rec_open(name, mode: PAnsiChar): longint; cdecl; external name 'FPC_ZOS_REC_OPEN';
++function zos_rec_read(h: longint; buf: pointer; max: int64): int64; cdecl; external name 'FPC_ZOS_REC_READ';
++function zos_rec_write(h: longint; buf: pointer; n: int64): int64; cdecl; external name 'FPC_ZOS_REC_WRITE';
++function zos_rec_locate(h: longint; key: pointer; keylen: int64; how: longint): longint; cdecl; external name 'FPC_ZOS_REC_LOCATE';
++function zos_rec_update(h: longint; buf: pointer; n: int64): int64; cdecl; external name 'FPC_ZOS_REC_UPDATE';
++function zos_rec_delete(h: longint): longint; cdecl; external name 'FPC_ZOS_REC_DELETE';
++function zos_rec_info(h: longint; out recfm: longint; out lrecl: int64; out vsamtype, keylen, keypos: longint): longint; cdecl; external name 'FPC_ZOS_REC_INFO';
++function zos_dsn_close(h: longint): longint; cdecl; external name 'FPC_ZOS_DSN_CLOSE';
++function zos_errno: longint; cdecl; external name 'FPC_ZOS_ERRNO';
++
++const
++  { flocate options (stdio.h) }
++  KEY_FIRST = 1;
++  KEY_LAST  = 2;
++  KEY_EQ    = 3;
++  KEY_GE    = 5;
++  modes: array[TRecOpenMode] of PAnsiChar = ('rb', 'rb+', 'wb', 'ab');
++
++function RecOpen(out f: TRecFile; const name: RawByteString; mode: TRecOpenMode): boolean;
++var
++  recfm, vt, kl, kp: longint;
++  lrecl: int64;
++begin
++  FillChar(f, sizeof(f), 0);
++  f.Handle := zos_rec_open(PAnsiChar(name), modes[mode]);
++  result := f.Handle >= 0;
++  if not result then
++    exit;
++  if zos_rec_info(f.Handle, recfm, lrecl, vt, kl, kp) = 0 then
++    begin
++      case recfm of
++        1: f.Format := rfFixed;
++        2: f.Format := rfVariable;
++        4: f.Format := rfVSAM;
++        else f.Format := rfUndefined;
++      end;
++      f.MaxLength := lrecl;
++      case vt of
++        1: f.VSAMType := vtESDS;
++        2: f.VSAMType := vtKSDS;
++        3: f.VSAMType := vtRRDS;
++        else f.VSAMType := vtNone;
++      end;
++      f.KeyLength := kl;
++      f.KeyOffset := kp;
++    end;
++end;
++
++function RecRead(var f: TRecFile; var buf; size: longint): longint;
++begin
++  result := zos_rec_read(f.Handle, @buf, size);
++end;
++
++function RecWrite(var f: TRecFile; const buf; len: longint): boolean;
++begin
++  result := zos_rec_write(f.Handle, @buf, len) = len;
++end;
++
++function RecLocate(var f: TRecFile; const key; keylen: longint; how: TRecLocate): boolean;
++const
++  opts: array[TRecLocate] of longint = (KEY_EQ, KEY_GE, KEY_FIRST, KEY_LAST);
++begin
++  if how in [rlFirst, rlLast] then
++    result := zos_rec_locate(f.Handle, nil, 0, opts[how]) = 0
++  else
++    result := zos_rec_locate(f.Handle, @key, keylen, opts[how]) = 0;
++end;
++
++function RecUpdate(var f: TRecFile; const buf; len: longint): boolean;
++begin
++  result := zos_rec_update(f.Handle, @buf, len) = len;
++end;
++
++function RecDelete(var f: TRecFile): boolean;
++begin
++  result := zos_rec_delete(f.Handle) = 0;
++end;
++
++function RecClose(var f: TRecFile): boolean;
++begin
++  result := zos_dsn_close(f.Handle) = 0;
++  f.Handle := -1;
++end;
++
++function RecLastError: longint;
++begin
++  result := zos_errno;
++end;
++
++end.
+-- 
+2.43.0
+

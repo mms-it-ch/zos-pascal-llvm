@@ -33,6 +33,38 @@ close(t);
   das würde die C-Laufzeit es als VB 1024 neu anlegen.
 - Datasets haben keine Dateideskriptoren (`fileno` = -1); die RTL vergibt eigene Handles.
 
+## Bibliotheken (PDS, PDSE)
+
+- Neues PDS mit dem ersten Member: `space` mit Directory-Blöcken, z. B.
+  `//ZPAS.LIB(MEM1),recfm=fb,lrecl=80,space=(trk,(1,1,5))`.
+- `dsntype=library` (PDSE) bzw. `dsntype=pds`: fopen kennt dsntype nicht (EINVAL); die RTL legt die
+  Bibliothek vorher mit `dynalloc` an (recfm, lrecl, blksize, space aus den Attributen).
+- Member ersetzen (`Rewrite`), löschen (`Erase`/`DeleteFile`), Bibliothek löschen.
+- Test `dsnpds.pas`: PDS, PDS über dsntype=pds, PDSE: 30/30.
+
+## Satzweise E/A und VSAM (Unit `zosrecio`)
+
+```pascal
+uses zosrecio;
+var f: TRecFile; r: TKundenSatz;
+begin
+  RecOpen(f, '//''HLQ.KUNDEN.KSDS''', romUpdate);
+  RecLocate(f, key, 8, rlKeyEqual);          { KSDS: über den Schlüssel }
+  if RecRead(f, r, sizeof(r)) > 0 then
+    RecUpdate(f, r, sizeof(r));              { oder RecDelete(f) }
+  RecClose(f);
+end.
+```
+
+- Ein Aufruf = ein Satz (`type=record`): VB-Sätze behalten ihre Länge, auch in Binärdaten; FB wird
+  beim Schreiben aufgefüllt. Kein Umwandeln des Inhalts (Text: Unit `zosebcdic`).
+- VSAM: KSDS (Laden in Schlüsselfolge mit `romWrite`, Einfügen/Ändern/Löschen mit `romUpdate`),
+  ESDS, RRDS; `RecLocate` mit `rlKeyEqual`, `rlKeyGreaterEqual`, `rlFirst`, `rlLast`.
+  `TRecFile` enthält Format, maximale Satzlänge, VSAM-Typ, Schlüssellänge und -position.
+- `SysUtils.FileExists`, `DeleteFile`, `RenameFile` kennen Dataset-Namen.
+- Test `rectest.sh` (legt den KSDS per IDCAMS an und löscht ihn): VB-Längen 3/80/200/1 exakt,
+  FB, KSDS laden/einfügen/positionieren/ändern/löschen/sequentiell/letzter Satz: 0 Fehler.
+
 ## Batch
 
 Sind die Deskriptoren 0/1/2 nicht offen (JCL mit POSIX(ON)), nimmt die RTL beim Start:

@@ -7,6 +7,11 @@
  * hierher; ein Zusatz nach einem Komma geht als fopen-Attribut mit, z. B.
  *     //'HLQ.NEU',recfm=fb,lrecl=80,space=(trk,(5,5))
  * Die Handles sind eigene Nummern ab DSN_FIRST (keine Dateideskriptoren).
+ * Bibliotheken: ein neues PDS entsteht mit dem ersten Member, wenn space
+ * Directory-Blöcke angibt (space=(trk,(1,1,5))). fopen kennt dsntype nicht:
+ * mit dsntype=library (PDSE) bzw. dsntype=pds legt diese Schicht die
+ * Bibliothek vorher mit dynalloc an (recfm, lrecl, blksize, space aus den
+ * Attributen) und gibt fopen die Attribute ohne dsntype weiter.
  *
  * Textdateien: Textmodus der C-Laufzeit (ein Satz = eine Zeile; FB wird beim
  * Schreiben mit Leerzeichen aufgefüllt und beim Lesen gekürzt, VB behält die
@@ -24,8 +29,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <dynit.h>
+#include <pwd.h>
 #include <stdint.h>
 #include <strings.h>
+#include <unistd.h>
 
 #define DSN_FIRST 0x7F000000
 #define DSN_MAX 256
@@ -97,6 +106,134 @@ int FPC_ZOS_DSN_HANDLE(int h)
   return get(h) != 0;
 }
 
+/* Wert eines Attributs key=... aus der fopen-Attributliste (Kopie in buf) */
+static int attr_value(const char *attrs, const char *key, char *buf, size_t n)
+{
+  size_t kl = strlen(key);
+  const char *p = attrs;
+  while (p && *p) {
+    if (strncasecmp(p, key, kl) == 0 && p[kl] == '=') {
+      const char *v = p + kl + 1, *e = v;
+      int depth = 0;
+      while (*e && (depth > 0 || *e != ',')) {
+        if (*e == '(') depth++;
+        if (*e == ')') depth--;
+        e++;
+      }
+      if ((size_t)(e - v) >= n)
+        return 0;
+      memcpy(buf, v, (size_t)(e - v));
+      buf[e - v] = 0;
+      return 1;
+    }
+    /* zum nächsten Attribut (Klammern überspringen) */
+    {
+      int depth = 0;
+      while (*p && (depth > 0 || *p != ',')) {
+        if (*p == '(') depth++;
+        if (*p == ')') depth--;
+        p++;
+      }
+      if (*p == ',')
+        p++;
+    }
+  }
+  return 0;
+}
+
+/* Attribut key=... aus der Liste entfernen (an Ort und Stelle) */
+static void attr_remove(char *attrs, const char *key)
+{
+  size_t kl = strlen(key);
+  char *p = attrs;
+  while (*p) {
+    char *start = p;
+    int depth = 0;
+    while (*p && (depth > 0 || *p != ',')) {
+      if (*p == '(') depth++;
+      if (*p == ')') depth--;
+      p++;
+    }
+    if (strncasecmp(start, key, kl) == 0 && start[kl] == '=') {
+      if (*p == ',')
+        p++;
+      memmove(start, p, strlen(p) + 1);
+      p = start;
+    } else if (*p == ',')
+      p++;
+  }
+  kl = strlen(attrs);
+  if (kl && attrs[kl - 1] == ',')
+    attrs[kl - 1] = 0;
+}
+
+/* Bibliothek (PDS/PDSE) mit dynalloc anlegen; name = //'DSN(MEMBER)' oder
+ * //DSN(MEMBER) (TSO-Präfix = User-ID). Ist sie schon da, schlägt dynalloc
+ * fehl, das ist in Ordnung (fopen folgt). */
+static void alloc_library(const char *name, const char *attrs, unsigned char dsntype)
+{
+  char dsn[64], v[64];
+  const char *p = name + 2;
+  size_t k = 0;
+  __dyn_t ip;
+  if (*p == '\'') {
+    p++;
+  } else {
+    struct passwd *pw = getpwuid(geteuid());
+    if (!pw)
+      return;
+    for (const char *u = pw->pw_name; *u && k < 8; u++)
+      dsn[k++] = (char)toupper((unsigned char)*u);
+    dsn[k++] = '.';
+  }
+  for (; *p && *p != '(' && *p != '\'' && k < sizeof dsn - 1; p++)
+    dsn[k++] = (char)toupper((unsigned char)*p);
+  dsn[k] = 0;
+  dyninit(&ip);
+  ip.__dsname = dsn;
+  ip.__status = __DISP_NEW;
+  ip.__normdisp = __DISP_CATLG;
+  ip.__conddisp = __DISP_DELETE;
+  ip.__dsorg = __DSORG_PO;
+  ip.__dsntype = dsntype;
+  ip.__alcunit = __TRK;
+  ip.__primary = 1;
+  ip.__secondary = 1;
+  ip.__dirblk = 5;
+  ip.__recfm = _VB_;
+  ip.__lrecl = 255;
+  if (attr_value(attrs, "recfm", v, sizeof v)) {
+    if (strcasecmp(v, "f") == 0) ip.__recfm = _F_;
+    else if (strcasecmp(v, "fb") == 0) ip.__recfm = _FB_;
+    else if (strcasecmp(v, "v") == 0) ip.__recfm = _V_;
+    else if (strcasecmp(v, "vb") == 0) ip.__recfm = _VB_;
+    else if (strcasecmp(v, "u") == 0) ip.__recfm = _U_;
+  }
+  if (attr_value(attrs, "lrecl", v, sizeof v))
+    ip.__lrecl = (unsigned short)atoi(v);
+  if (attr_value(attrs, "blksize", v, sizeof v))
+    ip.__blksize = (short)atoi(v);
+  /* space=(trk|cyl,(p[,s[,d]])) */
+  if (attr_value(attrs, "space", v, sizeof v)) {
+    int pr = 0, se = 0, di = 0;
+    char unit[8] = "";
+    if (sscanf(v, "(%7[a-zA-Z],(%d,%d,%d))", unit, &pr, &se, &di) >= 2 ||
+        sscanf(v, "(%7[a-zA-Z],%d)", unit, &pr) == 2) {
+      if (strcasecmp(unit, "cyl") == 0)
+        ip.__alcunit = __CYL;
+      if (pr > 0) ip.__primary = pr;
+      if (se > 0) ip.__secondary = se;
+      if (di > 0) ip.__dirblk = di;
+    }
+  }
+  if (dynalloc(&ip) == 0) {
+    __dyn_t fr;
+    dyninit(&fr);
+    fr.__dsname = dsn;
+    dynfree(&fr);
+  }
+}
+
 /* mode: 0 lesen, 1 schreiben (neu), 2 lesen/schreiben, 3 anhängen,
  * 4 lesen/schreiben (neu).
  * Ergebnis: Handle oder -1 (errno gesetzt). */
@@ -105,7 +242,7 @@ int FPC_ZOS_DSN_OPEN(const char *name, int mode, int text)
   static const char *const modes[2][5] = {
     { "rb", "wb", "rb+", "ab", "wb+" },
     { "r", "w", "r+", "a", "w+" } };
-  char fname[1100], fmode[300];
+  char fname[1100], fmode[300], attrs[260], v[16];
   const char *comma;
   size_t len;
   int i;
@@ -130,12 +267,28 @@ int FPC_ZOS_DSN_OPEN(const char *name, int mode, int text)
   }
   memcpy(fname, name, len);
   fname[len] = 0;
+  attrs[0] = 0;
+  if (comma) {
+    if (strlen(comma + 1) >= sizeof attrs) {
+      errno = EINVAL;
+      return -1;
+    }
+    strcpy(attrs, comma + 1);
+    /* Bibliothek: dsntype=library|pds kennt fopen nicht -> dynalloc */
+    if (attr_value(attrs, "dsntype", v, sizeof v)) {
+      if (mode != 0)
+        alloc_library(fname, attrs, strcasecmp(v, "library") == 0 ? __DSNT_LIBRARY : __DSNT_PDS);
+      attr_remove(attrs, "dsntype");
+      if (!attrs[0])
+        comma = 0;
+    }
+  }
   /* Neu schreiben ohne eigene Attribute: recfm=* behält die Attribute eines
    * vorhandenen Datasets (sonst legt "w" es mit Standardattributen neu an,
    * aus FB 80 würde VB 1024) */
   snprintf(fmode, sizeof fmode, "%s%s%s", modes[text != 0][mode],
            comma ? "," : (mode == 1 || mode == 4) ? ",recfm=*" : "",
-           comma ? comma + 1 : "");
+           comma ? attrs : "");
   for (i = 0; i < DSN_MAX; i++)
     if (!tab[i].f)
       break;
@@ -308,4 +461,156 @@ void FPC_ZOS_A2E(unsigned char *p, long n)
 {
   for (long i = 0; i < n; i++)
     p[i] = a2e[p[i]];
+}
+
+/* Satz-Schnittstelle (Unit zosrecio): Datasets satzweise (type=record), auch VSAM
+ * (KSDS, ESDS, RRDS) mit Positionieren über Schlüssel, Ändern und Löschen.
+ * Der Inhalt wird nicht umgewandelt. Handles wie bei den Datei-Routinen.
+ * mode: fopen-Modus ohne type=record, z. B. "rb", "rb+", "wb", "ab". */
+int FPC_ZOS_REC_OPEN(const char *name, const char *mode)
+{
+  char m[400], fname[1100], attrs[260], v[16];
+  const char *comma = 0;
+  size_t len;
+  int i;
+  for (i = 0; i < DSN_MAX; i++)
+    if (!tab[i].f)
+      break;
+  if (i == DSN_MAX) {
+    errno = EMFILE;
+    return -1;
+  }
+  /* Attribute nach dem Namen (außerhalb von Hochkommas), wie FPC_ZOS_DSN_OPEN */
+  for (const char *q = name, *quote = 0; *q; q++) {
+    if (*q == '\'')
+      quote = quote ? 0 : q;
+    else if (*q == ',' && !quote) {
+      comma = q;
+      break;
+    }
+  }
+  len = comma ? (size_t)(comma - name) : strlen(name);
+  if (len >= sizeof fname || (comma && strlen(comma + 1) >= sizeof attrs)) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  memcpy(fname, name, len);
+  fname[len] = 0;
+  attrs[0] = 0;
+  if (comma) {
+    strcpy(attrs, comma + 1);
+    if (attr_value(attrs, "dsntype", v, sizeof v)) {
+      if (mode[0] != 'r')
+        alloc_library(fname, attrs, strcasecmp(v, "library") == 0 ? __DSNT_LIBRARY : __DSNT_PDS);
+      attr_remove(attrs, "dsntype");
+    }
+  }
+  /* neu schreiben ohne Attribute: vorhandene Attribute behalten */
+  snprintf(m, sizeof m, "%s,type=record%s%s", mode,
+           attrs[0] ? "," : (mode[0] == 'w') ? ",recfm=*" : "", attrs);
+  tab[i].f = fopen(fname, m);
+  if (!tab[i].f)
+    return -1;
+  tab[i].text = 0;
+  return DSN_FIRST + i;
+}
+
+/* nächster Satz; Ergebnis: Länge, -1 Ende (errno 0) oder Fehler (errno) */
+long FPC_ZOS_REC_READ(int h, void *buf, long max)
+{
+  struct dsn *d = get(h);
+  size_t n;
+  if (!d) {
+    errno = EBADF;
+    return -1;
+  }
+  errno = 0;
+  n = fread(buf, 1, (size_t)max, d->f);
+  if (n == 0 && (feof(d->f) || ferror(d->f))) {
+    if (feof(d->f))
+      errno = 0;
+    return -1;
+  }
+  return (long)n;
+}
+
+/* einen Satz schreiben (VSAM KSDS: einfügen, Reihenfolge über den Schlüssel) */
+long FPC_ZOS_REC_WRITE(int h, const void *buf, long n)
+{
+  struct dsn *d = get(h);
+  if (!d) {
+    errno = EBADF;
+    return -1;
+  }
+  return fwrite(buf, 1, (size_t)n, d->f) == (size_t)n ? n : -1;
+}
+
+/* positionieren: how = __KEY_EQ (3), __KEY_GE (5), __KEY_FIRST (1),
+ * __KEY_LAST (2), __RBA_EQ (0) ...; 0 = gefunden */
+int FPC_ZOS_REC_LOCATE(int h, const void *key, long keylen, int how)
+{
+  struct dsn *d = get(h);
+  if (!d) {
+    errno = EBADF;
+    return -1;
+  }
+  return flocate(d->f, key, (size_t)keylen, how);
+}
+
+/* zuletzt gelesenen Satz ersetzen (VSAM) */
+long FPC_ZOS_REC_UPDATE(int h, const void *buf, long n)
+{
+  struct dsn *d = get(h);
+  if (!d) {
+    errno = EBADF;
+    return -1;
+  }
+  return fupdate(buf, (size_t)n, d->f) == (size_t)n ? n : -1;
+}
+
+/* zuletzt gelesenen Satz löschen (VSAM KSDS/RRDS) */
+int FPC_ZOS_REC_DELETE(int h)
+{
+  struct dsn *d = get(h);
+  if (!d) {
+    errno = EBADF;
+    return -1;
+  }
+  return fdelrec(d->f);
+}
+
+/* Satzformat: recfm (1 F, 2 V, 3 U, 4 VSAM), maximale Satzlänge,
+ * VSAM-Typ (1 ESDS, 2 KSDS, 3 RRDS), Schlüssellänge und -position */
+int FPC_ZOS_REC_INFO(int h, int *recfm, long *lrecl, int *vsamtype, int *keylen, int *keypos)
+{
+  struct dsn *d = get(h);
+  fldata_t fl;
+  if (!d) {
+    errno = EBADF;
+    return -1;
+  }
+  if (fldata(d->f, 0, &fl) != 0)
+    return -1;
+  *recfm = fl.__dsorgVSAM ? 4 : fl.__recfmF ? 1 : fl.__recfmV ? 2 : 3;
+  *lrecl = (long)fl.__maxreclen;
+  *vsamtype = fl.__dsorgVSAM ? fl.__vsamtype : 0;
+  *keylen = fl.__dsorgVSAM ? (int)fl.__vsamkeylen : 0;
+  *keypos = fl.__dsorgVSAM ? (int)fl.__vsamRKP : 0;
+  return 0;
+}
+
+/* errno der C-Laufzeit (Unit zosrecio: RecLastError) */
+int FPC_ZOS_ERRNO(void)
+{
+  return errno;
+}
+
+/* gibt es das Dataset / Member / die DD-Anweisung? (SysUtils.FileExists) */
+int FPC_ZOS_DSN_EXISTS(const char *name)
+{
+  FILE *f = fopen(name, "rb");
+  if (!f)
+    return 0;
+  fclose(f);
+  return 1;
 }
