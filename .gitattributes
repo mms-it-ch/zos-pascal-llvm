@@ -19,3 +19,5 @@ runtime/*.c text eol=lf
 *.dd text eol=lf
 *.jcl text eol=lf
 fpc/upstream/patches/*.patch -text
+# ptop (Linux) liest die Konfiguration
+vscode/resources/*.cfg text eol=lf
