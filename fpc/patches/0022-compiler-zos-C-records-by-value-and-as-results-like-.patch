@@ -1,0 +1,265 @@
+From 02e61375156230c5f361ad86d4c31216584d1eba Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 06:36:10 +0200
+Subject: [PATCH 22/22] compiler/zos: C records by value and as results like
+ clang (XPLINK-64)
+
+cdecl functions now pass and return records the way clang does for
+z/OS, so that Pascal and C code can call each other with records of
+any size:
+
+- records of up to 24 bytes are returned in GPR 1-3 (inreg), also sizes
+  that are not a multiple of 8 (left-justified in the last register);
+  larger records via a hidden result pointer
+- complex-like records (two float or two double fields) are passed and
+  returned in FPRs (results in FPR 0 and 2)
+- records passed by value always occupy full 64 bit slots; small records
+  (1, 2, 4 bytes) are no longer passed as integers of their own size,
+  and the last, partially filled slot of a larger record is no longer
+  truncated and zero extended: the data is left-justified
+
+Generic code: llvmgetcgparadef keeps the last location a full 64 bit
+slot on s390x; gen_load_loc_cgpara no longer treats a record in several
+FPU locations as a single floating point value; the LLVM code generator
+loads and stores FPU locations of such records.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/hlcgobj.pas       |  5 ++-
+ compiler/llvm/hlcgllvm.pas | 14 +++++++-
+ compiler/llvm/llvmdef.pas  | 18 ++++++++++
+ compiler/s390x/cpupara.pas | 73 ++++++++++++++++++++++++++------------
+ 4 files changed, 86 insertions(+), 24 deletions(-)
+
+diff --git a/compiler/hlcgobj.pas b/compiler/hlcgobj.pas
+index 20d48f32..8609220b 100644
+--- a/compiler/hlcgobj.pas
++++ b/compiler/hlcgobj.pas
+@@ -5698,7 +5698,10 @@ implementation
+          { some ABIs return certain records in an fpu register }
+          (l.loc in [LOC_FPUREGISTER,LOC_CFPUREGISTER]) or
+          (assigned(cgpara.location) and
+-          (cgpara.Location^.loc in [LOC_FPUREGISTER,LOC_CFPUREGISTER])) then
++          (cgpara.Location^.loc in [LOC_FPUREGISTER,LOC_CFPUREGISTER]) and
++          { a record passed in several locations (e.g. two floating point
++            registers) is handled by a_load_ref_cgpara below }
++          not assigned(cgpara.location^.next)) then
+         begin
+           gen_loadfpu_loc_cgpara(list,vardef,l,cgpara,vardef.size);
+           exit;
+diff --git a/compiler/llvm/hlcgllvm.pas b/compiler/llvm/hlcgllvm.pas
+index 24dc985f..c6c1db44 100644
+--- a/compiler/llvm/hlcgllvm.pas
++++ b/compiler/llvm/hlcgllvm.pas
+@@ -358,6 +358,15 @@ implementation
+                  else
+                    a_load_ref_reg(list,size,location^.def,tmpref,location^.register)
+              end;
++            LOC_FPUREGISTER,LOC_CFPUREGISTER:
++              begin
++                 { a field of a record passed in several floating point
++                   registers (e.g. complex-like records on z/OS) }
++                 if userecord then
++                   a_loadfpu_ref_reg(list,fielddef,location^.def,tmpref,location^.register)
++                 else
++                   a_loadfpu_ref_reg(list,size,location^.def,tmpref,location^.register);
++              end;
+             LOC_REFERENCE,LOC_CREFERENCE:
+               begin
+                  if assigned(location^.next) then
+@@ -2031,7 +2040,10 @@ implementation
+           repeat
+             paraloctoloc(ploc,hloc);
+             g_setup_load_field_by_name(list,trecorddef(llvmparadef),'F'+tostr(index),href,href2,fielddef);
+-            a_load_loc_ref(list,ploc^.def,fielddef,hloc,href2);
++            if hloc.loc in [LOC_FPUREGISTER,LOC_CFPUREGISTER] then
++              a_loadfpu_loc_ref(list,ploc^.def,fielddef,hloc,href2)
++            else
++              a_load_loc_ref(list,ploc^.def,fielddef,hloc,href2);
+             inc(index);
+             ploc:=ploc^.next;
+           until not assigned(ploc);
+diff --git a/compiler/llvm/llvmdef.pas b/compiler/llvm/llvmdef.pas
+index 1aa3a221..773b6fd2 100644
+--- a/compiler/llvm/llvmdef.pas
++++ b/compiler/llvm/llvmdef.pas
+@@ -955,11 +955,21 @@ implementation
+ 
+ 
+     function llvm_ret_inreg(def: tabstractprocdef): boolean;
++      var
++        retloc: tcgpara;
+       begin
+         result:=(target_info.system=system_s390x_zos) and
+           (def.returndef.typ=recorddef) and
+           (def.proccalloption in cdecl_pocalls) and
+           not paramanager.ret_in_param(def.returndef,def);
++        { records returned in GPRs only; complex-like records are returned
++          in FPRs as a plain struct (like clang) }
++        if result then
++          begin
++            retloc:=paramanager.get_funcretloc(def,callerside,nil);
++            result:=retloc.location^.loc=LOC_REGISTER;
++            retloc.reset;
++          end;
+       end;
+ 
+ 
+@@ -1183,6 +1193,14 @@           (def.returndef.typ=recorddef) and
+                 internalerror(2019020201);
+               retdeflist[i]:=tpointerdef(retloc^.def).pointeddef
+             end
++{$ifdef s390x}
++          { XPLINK: the data of a partially filled last slot is
++            left-justified, i.e. it is the start of a 64 bit integer loaded
++            from memory (big endian); the unused bytes are undefined }
++          else if (retloc^.def.size<>sizeleft) and
++                  (retloc^.def.typ<>floatdef) then
++            retdeflist[i]:=retloc^.def
++{$endif s390x}
+           else if retloc^.def.size<>sizeleft then
+             begin
+               case sizeleft of
+diff --git a/compiler/s390x/cpupara.pas b/compiler/s390x/cpupara.pas
+index a17b4e65..fafbbb16 100644
+--- a/compiler/s390x/cpupara.pas
++++ b/compiler/s390x/cpupara.pas
+@@ -12,9 +12,13 @@
+       - integers smaller than 64 bits are sign/zero extended to 64 bits
+       - floating point values are passed in FPR 0, 2, 4, 6 (named parameters
+         only, varargs floating point values are passed like integers)
+-      - records are passed by value as a sequence of 64 bit integers
+-        (records consisting of two floating point fields of the same type
+-         as two floating point values)
++      - records are passed by value as a sequence of 64 bit integers, the
++        data left-justified (a record of 3 bytes occupies the 3 high-order
++        bytes of the slot); records consisting of two floating point fields
++        of the same type ("complex-like") as two floating point values
++      - records of up to 24 bytes are returned in GPR 1-3 (left-justified),
++        complex-like records in FPR 0 and 2, larger records via a hidden
++        result pointer
+       - the first three 64 bit slots are passed in GPR 1-3, the remaining
+         ones in the argument area
+ 
+@@ -170,24 +174,31 @@       tcpuparamanager = class(tparamanager)
+ 
+ 
+     { XPLINK: C functions return aggregates of up to 24 bytes in GPR 1, 2
+-      and 3 (clang: inreg [n x i64], see llvm_ret_inreg), complex-like records
+-      in FPRs. Only sizes that
+-      are a multiple of 8 are implemented; the other sizes would have to be
+-      left-justified in the last register. }
++      and 3, left-justified (clang: inreg [n x i64], see llvm_ret_inreg) }
+     function c_record_in_regs(def: tdef; pd: tabstractprocdef): boolean;
+       begin
+         result:=(def.typ=recorddef) and
+           (pd.proccalloption in cdecl_pocalls) and
+-          (def.size in [8,16,24]) and
++          (def.size>0) and (def.size<=24) and
+           not assigned(complex_like_float_type(def));
+       end;
+ 
+ 
++    { XPLINK: C functions return complex-like records in FPR 0 and 2 }
++    function c_record_in_fpregs(def: tdef; pd: tabstractprocdef): boolean;
++      begin
++        result:=(def.typ=recorddef) and
++          (pd.proccalloption in cdecl_pocalls) and
++          assigned(complex_like_float_type(def));
++      end;
++
++
+     function tcpuparamanager.ret_in_param(def: tdef; pd: tabstractprocdef): boolean;
+       begin
+         if handle_common_ret_in_param(def,pd,result) then
+           exit;
+-        if c_record_in_regs(def,pd) then
++        if c_record_in_regs(def,pd) or
++           c_record_in_fpregs(def,pd) then
+           result:=false
+         else
+           result:=inherited ret_in_param(def,pd);
+@@ -197,17 +208,34 @@         result:=(def.typ=recorddef) and
+     function tcpuparamanager.get_funcretloc(p: tabstractprocdef; side: tcallercallee; forcetempdef: tdef): tcgpara;
+       const
+         retregs: array[0..2] of tregister = (NR_R1,NR_R2,NR_R3);
++        fpretregs: array[0..1] of tregister = (NR_F0,NR_F2);
+       var
+         paraloc: pcgparalocation;
+         retcgsize: tcgsize;
++        fdef: tdef;
+         i: longint;
+       begin
+         if set_common_funcretloc_info(p,forcetempdef,retcgsize,result) then
+           exit;
+         paraloc:=result.add_location;
+-        if c_record_in_regs(result.def,p) then
++        if c_record_in_fpregs(result.def,p) then
+           begin
+-            for i:=0 to result.def.size div 8-1 do
++            fdef:=complex_like_float_type(result.def);
++            result.size:=OS_NO;
++            for i:=0 to 1 do
++              begin
++                if i>0 then
++                  paraloc:=result.add_location;
++                paraloc^.loc:=LOC_FPUREGISTER;
++                paraloc^.register:=fpretregs[i];
++                paraloc^.size:=def_cgsize(fdef);
++                paraloc^.def:=fdef;
++              end;
++          end
++        else if c_record_in_regs(result.def,p) then
++          begin
++            result.size:=OS_NO;
++            for i:=0 to (result.def.size+7) div 8-1 do
+               begin
+                 if i>0 then
+                   paraloc:=result.add_location;
+@@ -520,14 +548,14 @@            (paradef.typ=recorddef) then
+           objectdef,
+           variantdef:
+             begin
+-              { TODO: XPLINK passes records consisting of two floating point
+-                fields of the same type ("complex-like") in FPRs; splitting
+-                them into two floating point locations is not yet supported
+-                by the generic code (internal error 200408162), so they are
+-                passed like other records for now (differs from C) }
++              { XPLINK passes records consisting of two floating point
++                fields of the same type ("complex-like") in FPRs }
+               fdef:=nil;
+-              if assigned(fdef) and not isvararg then
++              if (p.proccalloption in cdecl_pocalls) and not isvararg then
++                fdef:=complex_like_float_type(paradef);
++              if assigned(fdef) then
+                 begin
++                  para.size:=OS_NO;
+                   add_float_loc(fdef);
+                   add_float_loc(fdef);
+                 end
+@@ -537,16 +565,17 @@            (paradef.typ=recorddef) then
+                       ((paradef.typ=procvardef) and tprocvardef(paradef).is_addressonly) then
+                 add_int_loc(OS_ADDR,paradef)
+               else
+-                if paralen in [1,2,4] then
++                if (paralen in [1,2,4]) and
++                   not((paradef.typ=recorddef) and (p.proccalloption in cdecl_pocalls)) then
+                   { small records and sets: an integer of the same size, so
+                     that caller and callee agree on the position of the data
+-                    (big endian) }
++                    (big endian); C passes records left-justified in a 64 bit
++                    slot (below) }
+                   add_int_loc(int_cgsize(paralen),cgsize_orddef(int_cgsize(paralen)))
+                 else
+                 begin
+-                  { passed by value as a sequence of 64 bit integers
+-                    TODO: C passes records of other sizes than multiples of
+-                    8 left-aligned in 64 bit slots }
++                  { passed by value as a sequence of 64 bit integers, the
++                    last one left-justified (see llvmgetcgparadef) }
+                   para.size:=OS_NO;
+                   while paralen>0 do
+                     begin
+-- 
+2.43.0
+

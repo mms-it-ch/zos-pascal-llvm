@@ -111,7 +111,10 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   (clang: `inreg [n x i64]`; der SystemZ-Backend nimmt R1..R3 nur bei `inreg`, sonst R3, R2, R1).
   FPC: cpupara `c_record_in_regs` (Größen 8/16/24, cdecl, nicht complex-like), llvmdef
   `llvm_ret_inreg` schreibt `inreg` in Deklaration und Aufruf. Test `pf3/cret.pas` (+ `cret_c.c`,
-  auch C ruft Pascal). Offen: andere Größen (linksbündig im letzten Register), complex-like in FPRs.
+  auch C ruft Pascal). **Vollständig seit FPC-Patch 0022 (28.09.2026, PF5, `pf5/README.md`):** alle
+  Größen ≤ 24 Byte linksbündig in GPRs, complex-like in FPR 0/2 (Ergebnis und Parameter),
+  Parameter immer volle 64-Bit-Slots linksbündig. `pf5/abi.pas` 27/27, test/cg tcalext*/tcalpvr* 12/12.
+  Achtung: `test/cg` (und andere Unterverzeichnisse von `test/`) lief in PF3 nicht mit.
   Betraf `pthread_self` (pthread_t = 8-Byte-Struktur) → falsche Thread-IDs (tb0678).
 - **Umgebung:** LE ruft `main` nur mit argc/argv auf, ein dritter Parameter ist Zufall →
   `envp` aus `environ` (`FPC_ZOS_ENVIRON`, im ASCII-Modus `*__EnvnA()`); sonst S0C4 in heaptrc.
@@ -187,8 +190,8 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    gescheiterte Tests; dotest läuft mit `-L` (sonst Wettlauf um `out.`/Logs bei `-P`, Einträge
    gehen verloren). Referenz-Wrapper ohne `-FU` (sonst Unit-Tests „Failed to run“, Exit 2000).
    z/OS-Platz: ZPAS-ZFS 360 MB; zos-ld bindet erst ab 60 MB frei (`ZOS_MIN_FREE_KB`).
-2. Offene TODOs: C-ABI Record-Ergebnis anderer Größen und complex-like Records, Backtraces
-   (get_caller_addr). PF4 erledigt (auch die Library-Tests der Testsuite).
+2. Offene TODOs: Backtraces (get_caller_addr); Unterverzeichnisse von `test/` (cg, opt, units, …)
+   in der Testsuite laufen lassen. PF4 und PF5 (C-ABI) erledigt.
 
 ## Arbeitsweise
 - **JCL: JOB-Karte immer mit `REGION=0M,LINES=500000`.**

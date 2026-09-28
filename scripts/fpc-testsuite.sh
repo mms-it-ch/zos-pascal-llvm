@@ -42,6 +42,17 @@ if [ $SUMMARY_ONLY = 0 ]; then
       [ tstunits/s390x-zos/$u.ppu -nt "${PREFIX:-$HOME/opt/zfpc}/units/zos/system.ppu" ] ||
       sh "$REPO/scripts/zfpc" -FEtstunits/s390x-zos tstunits/$u.pp >/dev/null
   done
+  # C-Objekte der C-ABI-Tests (test/cg/tcalext*, tcalpvr*: {$L ctest.o} usw.), wie
+  # "make create_c_objects copyfiles", mit clang für z/OS
+  CO=test/cg/obj/zos/s390x
+  mkdir -p $CO "$OUT/test/cg"
+  for c in ctest tcext3 tcext4 tcext5 tcext6 tcext7; do
+    [ $CO/$c.o -nt test/cg/obj/$c.c ] ||
+      "${ZOS_CLANG:-$HOME/build/llvm-zos/bin/clang}" --target=s390x-ibm-zos -O2 -trigraphs \
+        -mzos-sys-include="$HOME/zos/include" -D__CHARSET_LIB=1 -fvisibility=default \
+        -c test/cg/obj/$c.c -o $CO/$c.o
+    cp $CO/$c.o "$OUT/test/cg/"
+  done
   # Aufräumen auf z/OS: Programme von Tests, die nur übersetzt und nicht ausgeführt
   # werden, bleiben sonst liegen. Jede Minute alles löschen, was älter als der
   # vorige Durchgang ist (lib, bind, run bleiben).
@@ -51,8 +62,10 @@ if [ $SUMMARY_ONLY = 0 ]; then
   CLEANER=$!
   trap 'kill $CLEANER 2>/dev/null' EXIT
   for d in "$@"; do
+    # Logname: Unterverzeichnisse (test/cg) mit _ statt /
+    dn=$(echo "$d" | tr / _)
     mkdir -p "$OUT/$d"
-    L=$OUT/log.${d}log
+    L=$OUT/log.${dn}log
     if [ $RETRY = 1 ]; then
       # gescheiterte Tests aus dem Log nehmen und neu laufen lassen
       grep '^Failed' "$L" | grep -oE "$d/[^ ]*\.(pp|pas)" | sort -u > "$L.retry"
@@ -70,7 +83,7 @@ if [ $SUMMARY_ONLY = 0 ]; then
       grep -F -f "$L.done" "$L" > "$L.keep"; mv "$L.keep" "$L"
       ls "$d"/*.pp "$d"/*.pas 2>/dev/null | grep -v -x -F -f "$L.done"
     else
-      rm -f "$L" "$OUT/faillist.${d}log" "$OUT/longlog.${d}log"
+      rm -f "$L" "$OUT/faillist.${dn}log" "$OUT/longlog.${dn}log"
       ls "$d"/*.pp "$d"/*.pas 2>/dev/null
     fi | sort |
       # -L: eigene Hilfsdateien je dotest-Prozess (sonst Wettlauf um out.);
@@ -80,7 +93,7 @@ if [ $SUMMARY_ONLY = 0 ]; then
     # dotest -L schreibt log.<pid>, faillist.<pid>, longlog.<pid> -> zusammenführen
     for k in log faillist longlog; do
       for f in "$OUT"/$k.[0-9]*; do
-        [ -f "$f" ] && cat "$f" >> "$OUT/$k.${d}log" && rm -f "$f"
+        [ -f "$f" ] && cat "$f" >> "$OUT/$k.${dn}log" && rm -f "$f"
       done
     done
   done
@@ -91,7 +104,8 @@ fi
 
 # Zusammenfassung (Kategorien wie im FPC-Makefile/digest)
 for d in "$@"; do
-  L=$OUT/log.${d}log
+  dn=$(echo "$d" | tr / _)
+  L=$OUT/log.${dn}log
   [ -f "$L" ] || continue
   echo "== $d: $(wc -l < "$L") Einträge"
   sed -E 's/ [^ ]+\.(pp|pas) [0-9]{4}\/.*$//; s/ [^ ]+\.(pp|pas)$//' "$L" | sort | uniq -c | sort -rn
