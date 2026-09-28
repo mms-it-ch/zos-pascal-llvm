@@ -1,0 +1,38 @@
+From 1a9d47badfc5437dbada69561efa9f8c55ea2ce5 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 11:11:48 +0200
+Subject: [PATCH 6/7] typinfo: SetToArray(TypeInfo, LongInt) on big endian
+ targets
+
+SetToString adjusts packed sets that are smaller than 32 bits on big
+endian targets, SetToArray(TypeInfo, LongInt) did not: the elements of
+a 1 or 2 byte set were taken from the wrong bytes of the LongInt
+(test/trtti24 on s390x).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/objpas/typinfo.pp | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/rtl/objpas/typinfo.pp b/rtl/objpas/typinfo.pp
+index b67c26ac..12c630a4 100644
+--- a/rtl/objpas/typinfo.pp
++++ b/rtl/objpas/typinfo.pp
+@@ -1629,6 +1629,14 @@ function SetToArray(PropInfo: PPropInfo; Value: Pointer) : TBytes;
+ 
+ function SetToArray(TypeInfo: PTypeInfo; Value: LongInt) : TBytes;
+ begin
++{$if defined(FPC_BIG_ENDIAN)}
++  { correctly adjust packed sets that are smaller than 32-bit (as in
++    SetToString) }
++  case GetTypeData(TypeInfo)^.OrdType of
++    otSByte,otUByte: Value := Value shl (SizeOf(Integer)*8-8);
++    otSWord,otUWord: Value := Value shl (SizeOf(Integer)*8-16);
++  end;
++{$endif}
+   Result:=SetToArray(TypeInfo,@Value);
+ end;
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,51 @@
+From 9a900f2854d651594ec7f6521e9d8a65e5b1ea6d Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 11:11:48 +0200
+Subject: [PATCH 7/7] fcl-process: ExitCode after WaitOnExit on unix
+
+WaitOnExit stored the result of WaitProcess, i.e. the already decoded
+exit code, in FExitCode, while PeekExitStatus stores the raw wait status.
+GetExitCode decodes FExitCode again (wifexited/wexitstatus), so after
+poWaitOnExit or WaitOnExit ExitCode was always 0 (e.g. "sh -c 'exit 3'":
+ExitStatus 3, ExitCode 0). WaitOnExit now keeps the raw status as well:
+ExitCode is 3, ExitStatus is the wait status (768), as after waiting via
+Running.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ packages/fcl-process/src/unix/process.inc | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/packages/fcl-process/src/unix/process.inc b/packages/fcl-process/src/unix/process.inc
+index 38d56375..08847c18 100644
+--- a/packages/fcl-process/src/unix/process.inc
++++ b/packages/fcl-process/src/unix/process.inc
+@@ -488,10 +488,23 @@ procedure TProcess.CloseProcessHandles;
+ end;
+ 
+ Function TProcess.WaitOnExit : Boolean;
++var
++  res: cint;
+ begin
+   if FRunning then
+-    fexitcode:=Cardinal(waitprocess(handle));
+-  Result:=(longint(fexitcode)>=0);
++    begin
++      { keep the raw wait status, as PeekExitStatus does: GetExitCode decodes
++        it (WaitProcess would return the already decoded exit code, and
++        ExitCode would then always be 0) }
++      repeat
++        res:=fpWaitPid(Handle,pcint(@FExitCode),0);
++      until (res<>-1) or (fpgeterrno<>ESysEINTR);
++      if res<>Handle then
++        FExitCode:=cardinal(-1);
++      Result:=(res=Handle) and not wifsignaled(FExitCode);
++    end
++  else
++    Result:=(longint(fexitcode)>=0);
+   FRunning:=False;
+ end;
+ 
+-- 
+2.43.0
+

@@ -18,3 +18,4 @@ runtime/*.c text eol=lf
 # JCL-Bausteine: LF (ein CR am Zeilenende wäre in der JCL ein Fehler)
 *.dd text eol=lf
 *.jcl text eol=lf
+fpc/upstream/patches/*.patch -text

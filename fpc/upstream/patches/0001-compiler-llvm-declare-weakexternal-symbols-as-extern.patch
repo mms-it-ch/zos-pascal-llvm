@@ -1,7 +1,7 @@
-From d7c2ef718396258709581cfee5e70a7987d6e1ff Mon Sep 17 00:00:00 2001
+From 92d08eda00cb96ca2efbccf6be44df577a6e0191 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 22:07:59 +0200
-Subject: [PATCH 21/30] compiler/llvm: declare weakexternal symbols as
+Subject: [PATCH 1/7] compiler/llvm: declare weakexternal symbols as
  extern_weak
 
 Declarations of functions and variables were always written as plain
@@ -16,10 +16,10 @@ Assisted-by: Claude Code (Anthropic)
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/compiler/llvm/agllvm.pas b/compiler/llvm/agllvm.pas
-index f896605f..6ebc4305 100644
+index ccfc209a..2363c88e 100644
 --- a/compiler/llvm/agllvm.pas
 +++ b/compiler/llvm/agllvm.pas
-@@ -1065,7 +1065,11 @@        tdoubleval = record
+@@ -1000,7 +1000,11 @@        tdoubleval = record
              assembler block) }
            if not is_definition then
              begin
@@ -32,7 +32,7 @@ index f896605f..6ebc4305 100644
                exit;
              end;
            case bind of
-@@ -1437,6 +1441,8 @@        tdoubleval = record
+@@ -1371,6 +1375,8 @@        tdoubleval = record
                    if not(ldf_definition in taillvmdecl(hp).flags) then
                      begin
                        writer.AsmWrite('declare');

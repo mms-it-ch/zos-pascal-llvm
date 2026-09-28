@@ -1,7 +1,7 @@
 From 5960d0b0d07e5fbcfcc134fe1b5a60403071e6ea Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 15:48:03 +0200
-Subject: [PATCH 09/29] rtl: z/OS termios, crt and termio
+Subject: [PATCH 09/30] rtl: z/OS termios, crt and termio
 
 - termios.inc rewritten from the z/OS headers: field order c_cflag,
   c_iflag, c_lflag, c_oflag, NCCS 11, z/OS flag values, TIOCGWINSZ

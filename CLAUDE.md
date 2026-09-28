@@ -220,6 +220,12 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    z/OS-Platz: ZPAS-ZFS 360 MB; zos-ld bindet erst ab 60 MB frei (`ZOS_MIN_FREE_KB`).
 2. Offene TODOs: keine größeren. PF4, PF5 (C-ABI), Backtraces und die Unterverzeichnisse von
    `test/` erledigt.
+3. **Meldungen an FPC (28.09.2026, `fpc/upstream/`):** 5 Issue-Texte + 7 eigenständige Patches gegen
+   FPC main b19181d6 (Zweig `upstream-fixes`, Worktree `~/src/fpc-upstream`). Einreichen muss der
+   Nutzer (kein GitLab-Zugang). Auf x86_64-linux nachgestellt (LLVM-Compiler `~/build/fpc-llvm-x64`,
+   mit Patches `~/build/fpc-llvm-x64-fix`; ld.bfd braucht dort das Entfernen von --eh-frame-hdr,
+   libgcc_s.so-Verknüpfung in ~/opt/linklibs): weakexternal, Capturer/lokale Routinen,
+   Interface-Wrapper; fcl-process ExitCode auch mit normalem FPC (FPC-Patch 0030 im Port).
 
 ## Arbeitsweise
 - **JCL: JOB-Karte immer mit `REGION=0M,LINES=500000`.**

@@ -22,6 +22,8 @@ Eigener Zweig `pascal-zos` (Worktree `~/src/llvm-pascal`) auf dem Zweig `zos-fix
 | 0010 | Schwache Referenzen (`extern_weak`) bleiben schwach: `<f>@indirect` übernimmt „weak“, PR-Referenzen (externe Daten) bekommen die Bindungsstärke (sonst IEW2456E bei fehlendem Symbol); Test `zos-extern-weak.ll` | eigen, gemeldet: llvm/llvm-project#226835, PR #226840 |
 
 Upstream gemeldet (27.09.2026): 0003 → #226804, 0004 → #226799, 0006 → #226800, 0008 → Kommentar zu PR #226682, 0010 → #226835 (PR #226840, Zweig `zos-extern-weak` im Fork, Review-Hilfe `llvm/pr/REVIEW-1.md`).
+0009 → Kommentar zu PR #225157 (28.09.2026): ohne Zwischenspeicher der Sektionen zerfällt auch C_@@SQINIT;
+beobachtet mit unserer Variante 0002, nicht mit dem PR-Zweig selbst.
 0008 ergänzt die Basis-Korrektur „function descriptor for external functions in initializers“
 (`cd02b5ee0` auf `zos-fixes`, upstream PR llvm/llvm-project#226682): Seitdem sind Zeiger
 aus Initialisierern aufrufbar, aber für externe Funktionen nicht gleich der im Code
