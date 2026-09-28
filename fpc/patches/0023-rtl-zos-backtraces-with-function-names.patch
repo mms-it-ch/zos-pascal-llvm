@@ -1,0 +1,135 @@
+From af895dbb71f89cbab52bc7638c6c33e5670aa953 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 08:54:52 +0200
+Subject: [PATCH 23/23] rtl/zos: backtraces with function names
+
+get_pc_addr, get_caller_addr and get_caller_frame returned a fixed fake
+address, so runtime errors and unhandled exceptions showed no usable
+backtrace. They now walk the XPLINK stack with the traceback service of
+Language Environment (__le_traceback, runtime/zosunwind.c): the frame is
+llvm.frameaddress(0) = R4 + 2048, LE returns the DSA of the caller and the
+address of its call instruction and detects the end of the chain (main
+program, thread). The walk also ends at FPC_SYSTEMMAIN.
+
+StackTop is not usable as an upper bound on z/OS (StackBottom is set from
+Sptr during the initialisation of the system unit, below the frames of the
+main program), so it returns the highest address.
+
+BackTraceStrFunc appends the function name from the PPA1 of the function.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/s390x/s390x.inc | 37 ++++++++++++++++++++++++++++---------
+ rtl/zos/system.pp   | 27 +++++++++++++++++++++++++++
+ 2 files changed, 55 insertions(+), 9 deletions(-)
+
+diff --git a/rtl/s390x/s390x.inc b/rtl/s390x/s390x.inc
+index 60b6d99a..5468d9f4 100644
+--- a/rtl/s390x/s390x.inc
++++ b/rtl/s390x/s390x.inc
+@@ -168,32 +168,51 @@ function fpc_atomic_xchg_64(var Target: int64; Source: int64): int64; compilerpr
+                        Caller/StackFrame Helpers
+ ****************************************************************************}
+ 
+-{ Stack walking is not implemented yet (XPLINK frames have no frame pointer
+-  chain that LLVM maintains). As on wasm32 a small fake backtrace is
+-  produced, otherwise programs terminate with no output at all in case of a
+-  runtime error. }
++{ XPLINK frames have no frame pointer chain. The stack is walked with the
++  help of the entry point markers and PPA1s of the functions (DSA size, saved
++  registers), like the exception unwinder does (runtime/zosunwind.c). A frame
++  is llvm.frameaddress(0) (= get_frame) = R4 + 2048 of the function, the
++  address is a code address in it; both are needed for a step. }
++
++function zos_pc_addr: CodePointer; cdecl; external name 'FPC_ZOS_PC_ADDR';
++function zos_caller_addr(framebp: pointer; addr: codepointer): codepointer; cdecl; external name 'FPC_ZOS_CALLER_ADDR';
++function zos_caller_frame(framebp: pointer; addr: codepointer): pointer; cdecl; external name 'FPC_ZOS_CALLER_FRAME';
+ 
+ {$define FPC_SYSTEM_HAS_GET_PC_ADDR}
+ function Get_pc_addr : CodePointer;
+   begin
+-    result:=CodePointer($eeeeeeef);
++    result:=zos_pc_addr;
+   end;
+ 
+ 
+ {$define FPC_SYSTEM_HAS_GET_CALLER_ADDR}
+ function get_caller_addr(framebp:pointer;addr:codepointer=nil):pointer;
+   begin
+-    if addr=CodePointer($eeeeeeef) then
+-      result:=CodePointer($eeeeeeee)
++    { without an address, the function of the frame is unknown }
++    if addr=nil then
++      result:=nil
+     else
+-      result:=nil;
++      result:=zos_caller_addr(framebp,addr);
+   end;
+ 
+ 
+ {$define FPC_SYSTEM_HAS_GET_CALLER_FRAME}
+ function get_caller_frame(framebp:pointer;addr:codepointer=nil):pointer;
+   begin
+-    result:=nil;
++    if addr=nil then
++      result:=nil
++    else
++      result:=zos_caller_frame(framebp,addr);
++  end;
++
++
++{ StackBottom/StackLength are set from Sptr during the initialisation of the
++  system unit, so StackBottom+StackLength lies below the frames of the main
++  program; the stack walk ends at FPC_SYSTEMMAIN instead (zosunwind.c) }
++{$define FPC_SYSTEM_HAS_STACKTOP}
++function StackTop: pointer;
++  begin
++    result:=pointer(high(ptruint));
+   end;
+ 
+ 
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+index e6810313..4a8a2fb2 100644
+--- a/rtl/zos/system.pp
++++ b/rtl/zos/system.pp
+@@ -245,10 +245,37 @@ function CheckInitialStkLen(stklen : SizeUInt) : SizeUInt;
+ end;
+ 
+ 
++{ name of the function containing addr, from its PPA1 (runtime/zosunwind.c) }
++function zos_func_name(ip: PtrUInt; buf: PAnsiChar; n: longint): longint; cdecl; external name 'FPC_ZOS_FUNC_NAME';
++
++{ backtrace line: address and function name (the name as in the object file,
++  e.g. P$PROG_$$_PROC$LONGINT; without debug information there is no line
++  information on z/OS) }
++function ZosBackTraceStr(addr: CodePointer): ShortString;
++var
++  buf: array[0..239] of AnsiChar;
++  i: longint;
++begin
++  result:='  $'+hexstr(addr);
++  if (addr<>nil) and
++     (zos_func_name(PtrUInt(addr),@buf[0],length(buf))<>0) then
++    begin
++      result:=result+'  ';
++      i:=0;
++      while (buf[i]<>#0) and (length(result)<high(result)) do
++        begin
++          result:=result+buf[i];
++          inc(i);
++        end;
++    end;
++end;
++
++
+ Begin
+   IsConsole := TRUE;
+   StackLength := CheckInitialStkLen(InitialStkLen);
+   StackBottom := Sptr - StackLength;
++  BackTraceStrFunc := @ZosBackTraceStr;
+   { Set up signals handlers (may be needed by init code to test cpu features) }
+   InstallSignals;
+ 
+-- 
+2.43.0
+

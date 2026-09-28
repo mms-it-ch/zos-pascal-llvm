@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <__le_api.h>
 
 typedef enum {
   _URC_NO_REASON = 0,
@@ -383,3 +384,49 @@ void _Unwind_SetGR(struct _Unwind_Context *c, int i, uintptr_t v) { if (i >= 0 &
 uintptr_t _Unwind_GetDataRelBase(struct _Unwind_Context *c) { (void)c; return 0; }
 uintptr_t _Unwind_GetTextRelBase(struct _Unwind_Context *c) { (void)c; return 0; }
 uintptr_t _Unwind_GetCFA(struct _Unwind_Context *c) { return c->gpr[4]; }
+
+/* Backtraces (System-Unit: get_pc_addr, get_caller_addr, get_caller_frame).
+ * frame ist wie bei get_frame = llvm.frameaddress(0) = R4 + 2048 der Funktion,
+ * addr eine Adresse in ihr (FPC gibt bei raise die Adresse eines Labels + 1
+ * an). Den Schritt zum Aufrufer macht der Traceback-Dienst von LE
+ * (__le_traceback): DSA = R4, Ergebnis die DSA des Aufrufers und die Adresse
+ * seines Aufrufbefehls. LE erkennt das Ende der Kette selbst (Hauptprogramm:
+ * CELQINIT, Thread: CELQPCMM) und prüft die DSAs; ein eigener Schritt über
+ * EPM/PPA1 (wie beim Unwinder) liest am Ende eines Thread-Stacks ein
+ * ungültiges R7 und sucht dann im Speicher nach einem EPM (SIGSEGV).
+ * Die Suche hört auch bei FPC_SYSTEMMAIN auf (darüber nur main und LE). */
+static int caller_step(uint64_t frame, uint64_t addr, uint64_t *cframe, uint64_t *caddr)
+{
+  __tf_parms_t tf;
+  _FEEDBACK fc;
+  if (frame < 2048 || (frame & 7) || addr < 0x1000)
+    return 0;
+  memset(&tf, 0, sizeof tf);
+  tf.__tf_dsa_addr = (void *)(frame - 2048);
+  tf.__tf_call_instruction = (void *)(addr & ~(uint64_t)1);
+  __le_traceback(__TRACEBACK_FIELDS, &tf, &fc);
+  if (fc.tok_sev != 0 || tf.__tf_is_main || !tf.__tf_caller_dsa_addr ||
+      (uint64_t)tf.__tf_entry_addr == ((uint64_t *)(void *)FPC_SYSTEMMAIN)[1])
+    return 0;
+  *cframe = (uint64_t)tf.__tf_caller_dsa_addr + 2048;
+  *caddr = (uint64_t)tf.__tf_caller_call_instruction;
+  return 1;
+}
+
+void *FPC_ZOS_CALLER_ADDR(void *frame, void *addr)
+{
+  uint64_t f, a;
+  return caller_step((uint64_t)frame, (uint64_t)addr, &f, &a) ? (void *)a : 0;
+}
+
+void *FPC_ZOS_CALLER_FRAME(void *frame, void *addr)
+{
+  uint64_t f, a;
+  return caller_step((uint64_t)frame, (uint64_t)addr, &f, &a) ? (void *)f : 0;
+}
+
+/* Adresse im Aufrufer (hinter dem Aufruf: XPLINK kehrt nach R7 + 2 zurück) */
+void *FPC_ZOS_PC_ADDR(void)
+{
+  return (char *)__builtin_return_address(0) + 2;
+}

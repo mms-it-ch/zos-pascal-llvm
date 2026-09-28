@@ -5,7 +5,8 @@
  * anderen FPC-Zielen wird deshalb der Maschinenkontext geändert: kehrt der
  * Handler zurück, läuft das Programm in fn (Pascal-Routine, XPLINK) weiter,
  * als hätte die unterbrochene Stelle fn aufgerufen:
- *   R1 = err, R2 = Fehleradresse, R3 = Frame (R4), R5/R6 = Deskriptor von fn,
+ *   R1 = err, R2 = Fehleradresse, R3 = Frame (R4 + 2048, wie get_frame),
+ *   R5/R6 = Deskriptor von fn,
  *   R7 = Fehleradresse - 2 (XPLINK-Rücksprung = R7 + 2), PSW = Einsprung von fn.
  * Die Unterbrechungsadresse zeigt hinter die auslösende Anweisung (IEEE-Falle)
  * oder auf sie; der Personality-Test (ip - 1) trifft so die unterbrochene
@@ -42,7 +43,7 @@ void FPC_ZOS_SIGREDIRECT(void *ucontext, void *fn, long err)
 
   put(m, MC_GPR + 8 * 1, (uint64_t)err);
   put(m, MC_GPR + 8 * 2, pc);
-  put(m, MC_GPR + 8 * 3, get(m, MC_GPR + 8 * 4));
+  put(m, MC_GPR + 8 * 3, get(m, MC_GPR + 8 * 4) + 2048);
   put(m, MC_GPR + 8 * 5, desc[0]);
   put(m, MC_GPR + 8 * 6, desc[1]);
   put(m, MC_GPR + 8 * 7, pc - 2);

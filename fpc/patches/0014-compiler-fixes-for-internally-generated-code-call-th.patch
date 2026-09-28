@@ -1,7 +1,7 @@
 From 98aedcc57fdf30f6c4e008f3adab5c51851e2235 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Sun, 27 Sep 2026 20:20:42 +0200
-Subject: [PATCH 14/22] compiler: fixes for internally generated code
+Subject: [PATCH 14/23] compiler: fixes for internally generated code
  (call-through, interface wrappers)
 
 - call-through of external redirects (main stub on z/OS/Darwin/AIX, forward

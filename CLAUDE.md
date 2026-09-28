@@ -115,6 +115,10 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   Größen ≤ 24 Byte linksbündig in GPRs, complex-like in FPR 0/2 (Ergebnis und Parameter),
   Parameter immer volle 64-Bit-Slots linksbündig. `pf5/abi.pas` 27/27, test/cg tcalext*/tcalpvr* 12/12.
   Achtung: `test/cg` (und andere Unterverzeichnisse von `test/`) lief in PF3 nicht mit.
+- **Backtraces (FPC-Patch 0023, 28.09.2026, `pf5/README.md`):** get_caller_addr/-frame über den
+  LE-Dienst `__le_traceback` (DSA = R4 = get_frame - 2048), Ende bei FPC_SYSTEMMAIN bzw. LE,
+  Namen aus dem PPA1 in BackTraceStrFunc. Eigener EPM-Schritt scheiterte am Thread-Stack-Ende
+  (ungültiges R7 -> Speichersuche -> SIGSEGV). raise: Label-Adresse + 1. ~11 µs je Ausnahme.
   Betraf `pthread_self` (pthread_t = 8-Byte-Struktur) → falsche Thread-IDs (tb0678).
 - **Umgebung:** LE ruft `main` nur mit argc/argv auf, ein dritter Parameter ist Zufall →
   `envp` aus `environ` (`FPC_ZOS_ENVIRON`, im ASCII-Modus `*__EnvnA()`); sonst S0C4 in heaptrc.
@@ -175,10 +179,12 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
 - **Library-Tests (27.09.2026):** 13/14 laufen (tlib1b: DWARF-Zeileninfo). FPC-Patch 0020 (dladdr
   auf z/OS nur LE-Stub → CEE3728S), 0021 (weakexternal → `extern_weak`), LLVM-Patch 0010 (weak
   über `@indirect` und Daten-PR). Startskript: `ZOS_RUN_DLLS`, `ZOS_RUN_CEEOPTS`.
-- **Vorsicht Dumps:** Abstürze mit zerstörtem Stack (tb0662 u. a.) enden beim LE-Traceback mit
-  U4083 RSN F und je einem Transaction-Dump-Dataset unter der User-ID (DYNDUMP ist NODYNAMIC,
-  hilft nicht). Die Testsuite läuft deshalb mit `TERMTHDACT(MSG)` (`ZOS_RUN_CEEOPTS`); vor
-  Testläufen mit bekannten Abstürzen daran denken.
+- **Vorsicht Dumps:** Abstürze mit zerstörtem Stack enden mit U4083 RSN F und je einem
+  Dump-Dataset `<USERID>.Dddd.Thhmmsst.Ppid` unter der User-ID (DYNDUMP ist NODYNAMIC, hilft
+  nicht). **Auch `TERMTHDACT(MSG)` verhindert das nicht** (Probe `pf3/stackcrash.pas`,
+  28.09.2026: trotzdem ein Dataset). Die Testsuite setzt es trotzdem (kein Traceback), aber
+  Läufe mit möglichen Abstürzen nur nach Rücksprache mit dem Nutzer; `pf3/stackcrash` nie
+  ohne Grund starten. tb0662 selbst endet inzwischen sauber (EOutOfMemory, RC 217).
 
 ## Nächste Schritte
 1. PF3: FPC-Testsuite (`~/src/fpc/tests`) auf z/OS. **tbs (27.09.2026): 772/784 ok, Referenz
@@ -190,8 +196,8 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    gescheiterte Tests; dotest läuft mit `-L` (sonst Wettlauf um `out.`/Logs bei `-P`, Einträge
    gehen verloren). Referenz-Wrapper ohne `-FU` (sonst Unit-Tests „Failed to run“, Exit 2000).
    z/OS-Platz: ZPAS-ZFS 360 MB; zos-ld bindet erst ab 60 MB frei (`ZOS_MIN_FREE_KB`).
-2. Offene TODOs: Backtraces (get_caller_addr); Unterverzeichnisse von `test/` (cg, opt, units, …)
-   in der Testsuite laufen lassen. PF4 und PF5 (C-ABI) erledigt.
+2. Offene TODOs: Unterverzeichnisse von `test/` (cg, opt, units, …) in der Testsuite laufen lassen
+   (Nutzer entscheidet wegen Dump-Risiko). PF4, PF5 (C-ABI) und Backtraces erledigt.
 
 ## Arbeitsweise
 - **JCL: JOB-Karte immer mit `REGION=0M,LINES=500000`.**

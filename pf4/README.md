@@ -35,8 +35,8 @@ Dafür nötig:
   machte `<f>@indirect` und Daten-PRs immer stark (LLVM-Patch 0010). C-Probe `weak_c.c`.
 - Startskript: `ZOS_RUN_DLLS=1` verlinkt `$ZOS_DIR/lib*.so` ins Laufverzeichnis (Tests laden
   `./lib<name>.so`), `ZOS_RUN_CEEOPTS` setzt `_CEE_RUNOPTS`. Die Testsuite nimmt
-  `TERMTHDACT(MSG)`: Tests, die den Stack zerstören (tb0662), führten beim LE-Traceback zu
-  U4083 RSN F und einem Transaction-Dump-Dataset je Lauf (trotz DYNDUMP NODYNAMIC).
+  `TERMTHDACT(MSG)` (kein LE-Traceback). Tests, die den Stack zerstören, erzeugen trotzdem
+  U4083 RSN F und ein Dump-Dataset je Lauf (auch mit MSG und trotz DYNDUMP NODYNAMIC).
 
 ## PDSE und Batch
 
