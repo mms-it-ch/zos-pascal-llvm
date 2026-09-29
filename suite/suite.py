@@ -50,6 +50,9 @@ BENCH_ARGS = {'nbody': '1000', 'fannkuchredux': '7', 'spectralnorm': '100', 'bin
 ZOS_SKIP = {
     'pidigits': 'nicht portabel: array[0..1] of dword absolute int64 setzt Little-Endian voraus '
                 '(auf z/OS Endlosschleife)',
+    'pidigits-2': 'braucht libgmp (auf z/OS nicht vorhanden)',
+    'pidigits-3': 'braucht libgmp (auf z/OS nicht vorhanden)',
+    'regexredux': 'braucht PCRE (nicht vorhanden)',
 }
 
 
@@ -256,6 +259,10 @@ def dump_count():
 
 def upload_dir(local, remote, exclude_bigger_than_mb=4):
     """Verzeichnis als tar hochladen (Windows-Temp, sftp.exe), große Dateien auslassen."""
+    if not os.path.isdir(local):
+        # Projekt ohne Testdaten: nur das Arbeitsverzeichnis anlegen
+        zsh(f'mkdir -p {remote}')
+        return []
     wtmp = sh("wslpath -u \"$(cmd.exe /c 'echo %TEMP%' 2>/dev/null | tr -d '\\r')\"")[1].strip()
     tar = f'{wtmp}/suite-{os.getpid()}.tar'
     left_out = []

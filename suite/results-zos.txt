@@ -1,0 +1,18 @@
+2026-09-29 02:11
+hashlib: rc=0 (26 s) Tests 1967, Fehler 0, Abweichungen 0
+simplebaselib: rc=0 (3 s) Tests 239, Fehler 0, Abweichungen 0
+fannkuchredux: rc=0 (1.3 s) Ausgabe gleich
+fasta-5: rc=0 (1.1 s) Ausgabe gleich
+fasta-6: rc=0 (1.3 s) Ausgabe gleich
+mandelbrot: rc=0 (1.1 s) Ausgabe gleich
+mandelbrot-2: rc=0 (1.1 s) Ausgabe gleich
+mandelbrot-3: rc=0 (1.1 s) Ausgabe gleich
+nbody: rc=0 (1.0 s) Ausgabe gleich
+nbody-2: rc=0 (1.1 s) Ausgabe gleich
+nbody-3: rc=0 (1.1 s) Ausgabe gleich
+pidigits: übersprungen (nicht portabel: array[0..1] of dword absolute int64 setzt Little-Endian voraus (auf z/OS Endlosschleife))
+pidigits-2: übersprungen (braucht libgmp (auf z/OS nicht vorhanden))
+pidigits-3: übersprungen (braucht libgmp (auf z/OS nicht vorhanden))
+regexredux: übersprungen (braucht PCRE (nicht vorhanden))
+revcomp-2: rc=0 (1.2 s) Ausgabe gleich
+spectralnorm: rc=0 (1.0 s) Ausgabe gleich

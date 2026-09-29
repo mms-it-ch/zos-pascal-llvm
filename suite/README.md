@@ -40,7 +40,26 @@ python3 suite/suite.py run   --target local|zos [projekt ... | bench]
 - Ergebnisse: `suite/results-local.txt`, `suite/results-zos.txt`, Protokolle in
   `~/build/suite/<target>/<projekt>/`.
 
+## Ergebnisse (29.09.2026)
+
+| | lokal (x86_64, `-O-`) | z/OS (`-O2`) |
+|---|---|---|
+| HashLib4Pascal | 1967 Tests, 0 Fehler | 1967 Tests, 0 Fehler (26 s) |
+| SimpleBaseLib4Pascal | 239 Tests, 0 Fehler | 239 Tests, 0 Fehler |
+| CryptoLib4Pascal | 1577 Tests, 0 Fehler | nicht übersetzbar (offener FPC-Fehler, s. u.) |
+| Benchmarks Game | 14 Programme, Ausgabe gleich | 10 Programme, Ausgabe gleich; `pidigits` nicht portabel, `pidigits-2/3` (GMP) und `regexredux` (PCRE) ausgelassen |
+
+Einzelheiten: `results-local.txt`, `results-zos.txt`.
+
 ## Befunde beim Aufbau
+
+- **Unwinder (runtime/zosunwind.c):** Bei `-O2` hingen Programme, sobald eine Ausnahme durch eine
+  Funktion mit Aufräumcode (z. B. lokale `TBytes`) lief: `_Unwind_Resume` steht als letzter
+  Aufruf am Funktionsende, seine Rücksprungadresse wurde keiner Funktion zugeordnet, die Suche
+  lief rückwärts in nicht lesbaren Speicher (SIGSEGV → neue Ausnahme → Schleife). Behoben
+  (ip-1, nur der erste EPM vor ip). Nachbau: Funktion mit `TBytes`-Local und `raise`.
+- **pidigits** (Benchmarks Game): `array[0..1] of dword absolute` über einem `int64` setzt
+  Little-Endian voraus - auf z/OS Endlosschleife (Programmfehler, kein Portfehler).
 
 - **FPC x86_64, `-O2`:** CryptoLib hat 53 Fehler (Zugriffsverletzungen bei elliptischen Kurven),
   ohne Optimierung 0 → lokale Referenz ohne Optimierung.
