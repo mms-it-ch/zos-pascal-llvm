@@ -1,0 +1,75 @@
+From f72dd5841c72fbff81b6a6f2eefa694ba587aef2 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Mon, 28 Sep 2026 22:44:55 +0200
+Subject: [PATCH 38/38] compiler: interface wrappers when the unit of the
+ parent class is not visible
+
+Interface wrappers call a method of a parent class through a typecast
+qualified with the unit of that class. If the unit is only used by the
+unit of an intermediate class, it is not visible where the wrapper is
+parsed ("Identifier not found", e.g. HashLib4Pascal: TDEK derives from
+TMultipleTransformNonBlock, whose unit uses HlpHash with THash). Then
+push the symtable of that unit while parsing the wrapper and use the
+unqualified class name.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/symcreat.pas | 26 ++++++++++++++++++++++++--
+ 1 file changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/compiler/symcreat.pas b/compiler/symcreat.pas
+index 036cdf20..c30cf56c 100644
+--- a/compiler/symcreat.pas
++++ b/compiler/symcreat.pas
+@@ -1169,7 +1169,12 @@       if (struct.typ=recorddef) and
+       callthroughpd, tmpproc: tprocdef;
+       str: ansistring;
+       fileinfo: tfileposinfo;
++      unitst: tsymtable;
++      srsym: tsym;
++      srsymtable: tsymtable;
++      prefix: TSymStr;
+     begin
++      unitst:=nil;
+       wrapperinfo:=pskpara_interface_wrapper(pd.skpara);
+       if not assigned(wrapperinfo) then
+         internalerror(2015090801);
+@@ -1192,8 +1197,21 @@       if (struct.typ=recorddef) and
+          not(df_generic in callthroughpd.struct.defoptions) and
+          not(df_specialization in callthroughpd.struct.defoptions) and
+          not assigned(callthroughpd.struct.owner.defowner) then
+-        str:=str+def_unit_name_prefix_if_toplevel(callthroughpd.struct)+
+-          '&'+callthroughpd.struct.typesym.realname+'(self).';
++        begin
++          prefix:=def_unit_name_prefix_if_toplevel(callthroughpd.struct);
++          { the unit of the parent class need not be visible here (it may only
++            be used by the unit of an intermediate class): then search the
++            class name in the symtable of that unit instead of qualifying it }
++          if (prefix<>'') and
++             (callthroughpd.struct.owner.symtabletype=globalsymtable) and
++             not callthroughpd.struct.owner.iscurrentunit and
++             not searchsym(copy(prefix,1,length(prefix)-1),srsym,srsymtable) then
++            begin
++              unitst:=callthroughpd.struct.owner;
++              prefix:='';
++            end;
++          str:=str+prefix+'&'+callthroughpd.struct.typesym.realname+'(self).';
++        end;
+       str:=str+'&'+callthroughpd.procsym.realname+'(';
+       addvisibleparameters(str,pd);
+       str:=str+') end;';
+@@ -1207,7 +1225,11 @@       if (struct.typ=recorddef) and
+           fileinfo.line:=1;
+           fileinfo.column:=1;
+         end;
++      if assigned(unitst) then
++        symtablestack.push(unitst);
+       str_parse_method_impl_with_fileinfo(str,pd,fileinfo.fileindex,fileinfo.line,false,tmpproc);
++      if assigned(unitst) then
++        symtablestack.pop(unitst);
+       dispose(wrapperinfo);
+       pd.skpara:=nil;
+     end;
+-- 
+2.43.0
+

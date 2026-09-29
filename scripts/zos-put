@@ -1,0 +1,22 @@
+#!/bin/sh
+# zos-put: eine lokale Datei (WSL-Pfad) unverändert (binär) nach z/OS kopieren.
+#   zos-put <datei> <ziel auf z/OS>
+# Läuft in WSL; sftp.exe von Git für Windows liest die Datei über ihren Windows-Pfad,
+# deshalb geht sie über das Windows-Temp. Zugangsdaten aus .zos.env.
+SELF=$(readlink -f "$0")
+G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
+ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
+WH=$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
+HOME=$WH . "$ENVFILE"
+[ $# -eq 2 ] || { echo "usage: zos-put <datei> <ziel>" >&2; exit 2; }
+SRCF=$1
+case "$SRCF" in
+  /mnt/*) ;;
+  *)
+    WTMP=$(wslpath -u "$(cmd.exe /c 'echo %TEMP%' 2>/dev/null | tr -d '\r')")
+    T=$WTMP/zos-put.$$
+    cp "$SRCF" "$T" || exit 1
+    trap 'rm -f "$T"' EXIT
+    SRCF=$T ;;
+esac
+echo "put $(wslpath -m "$SRCF") $2" | sftp.exe -q -i "$ZOS_KEY" -o BatchMode=yes -b - "$ZOS_HOST" >/dev/null

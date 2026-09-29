@@ -236,6 +236,15 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
    Interface-Wrapper; fcl-process ExitCode auch mit normalem FPC (FPC-Patch 0030 im Port).
 
 ## Arbeitsweise
+- **Testsuite aus freien Quellen (`suite/`, 29.09.2026):** HashLib4Pascal, SimpleBaseLib4Pascal,
+  CryptoLib4Pascal (FPCUnit) und Benchmarks Game, lokal und auf z/OS (`suite/README.md`). Befunde:
+  **Unwinder-Fehler** (`runtime/zosunwind.c`): eine Rücksprungadresse genau am Funktionsende (Aufruf
+  als letzter Befehl, z. B. `_Unwind_Resume` in einer Aufräum-Landestelle, bei `-O2` häufig) wurde
+  keiner Funktion zugeordnet, die Suche lief rückwärts in nicht lesbaren Speicher -> SIGSEGV ->
+  neue Ausnahme -> Endlosschleife. Jetzt ip-1 und nur der erste EPM vor ip. Nachbau
+  `lp1`: Funktion mit TBytes-Local + raise, `-O2`. Interface-Wrapper (FPC-Patch 0038).
+  Fehlersuche: `ZOS_IRC_OPT`/`ZOS_IRC_LLC` (Stufen von opt/llc getrennt), `ZOS_UNWIND_DEBUG=1`.
+  `zos-install-rtl.sh` lädt in Paketen (ZFS-Platz). `pidigits` ist nicht portabel (LE).
 - VS Code: `VSCODE.md` (Erweiterung `vscode/`, Tasks, FTP/JES über `scripts/zos-jes.py`, Passwort nur
   in `~/.netrc` in WSL). Zowe Explorer und alefragnani.pascal will der Nutzer nicht („direkt einbauen“).
   z/OS-Debugger: Agent `runtime/zosdbg.c`, Instrumentierung `scripts/zdbg-instrument.py`, Adapter

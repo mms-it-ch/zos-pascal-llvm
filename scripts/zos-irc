@@ -47,8 +47,10 @@ if grep -q '^!llvm.dbg.cu' "$IN" 2>/dev/null; then
   fi
   exit $?
 fi
-if [ "$OLEVEL" != 0 ] && [ -x "$BIN/opt" ]; then
-  "$BIN/opt" -O"$OLEVEL" "$IN" | "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT"
+# Fehlersuche: ZOS_IRC_OPT / ZOS_IRC_LLC geben die Stufen von opt und llc getrennt vor
+OPTL=${ZOS_IRC_OPT:-$OLEVEL}; LLCL=${ZOS_IRC_LLC:-$OLEVEL}
+if [ "$OPTL" != 0 ] && [ -x "$BIN/opt" ]; then
+  "$BIN/opt" -O"$OPTL" "$IN" | "$BIN/llc" -O"$LLCL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT"
 else
-  exec "$BIN/llc" -O"$OLEVEL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT" "$IN"
+  exec "$BIN/llc" -O"$LLCL" -mtriple=s390x-ibm-zos -filetype=obj -o "$OUT" "$IN"
 fi

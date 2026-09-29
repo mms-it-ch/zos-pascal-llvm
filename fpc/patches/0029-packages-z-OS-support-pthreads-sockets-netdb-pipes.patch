@@ -1,7 +1,7 @@
 From d92278f84e9e03a32fe92bef1c0b529cb76944e2 Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 10:51:05 +0200
-Subject: [PATCH 29/37] packages: z/OS support (pthreads, sockets, netdb,
+Subject: [PATCH 29/38] packages: z/OS support (pthreads, sockets, netdb,
  pipes)
 
 - pthreads: use the declarations of the run time library

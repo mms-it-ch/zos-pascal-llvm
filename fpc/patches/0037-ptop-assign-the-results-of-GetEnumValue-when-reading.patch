@@ -1,7 +1,7 @@
 From 5aff36ba17d1e3cdfd758a51bdf2b064da3f3c8f Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 17:44:08 +0200
-Subject: [PATCH 37/37] ptop: assign the results of GetEnumValue when reading
+Subject: [PATCH 37/38] ptop: assign the results of GetEnumValue when reading
  the configuration
 
 ReadConfigFrom, SetOption and GetKeySimList compared the result of

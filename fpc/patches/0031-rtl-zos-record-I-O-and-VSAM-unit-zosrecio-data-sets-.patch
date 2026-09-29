@@ -1,7 +1,7 @@
 From 7a0e7d06db0a83af8fbdc648ede9ea0582f67a8f Mon Sep 17 00:00:00 2001
 From: mms-it-ch <info@mms-it.ch>
 Date: Mon, 28 Sep 2026 12:00:25 +0200
-Subject: [PATCH 31/37] rtl/zos: record I/O and VSAM (unit zosrecio), data sets
+Subject: [PATCH 31/38] rtl/zos: record I/O and VSAM (unit zosrecio), data sets
  in SysUtils
 
 - New unit zosrecio: records of MVS data sets and VSAM clusters (KSDS,

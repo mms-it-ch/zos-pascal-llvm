@@ -89,6 +89,7 @@ static uint16_t get16(const uint8_t *p) { uint16_t v; memcpy(&v, p, 2); return v
 static uint64_t get64(const uint8_t *p) { uint64_t v; memcpy(&v, p, 8); return v; }
 
 /* PPA1 zum EPM prüfen und die benötigten Felder auslesen. */
+/* 1 = Funktion zu ip, 0 = kein EPM, -1 = EPM einer Funktion, die ip nicht enthält */
 static int parse_epm(const uint8_t *epm, uint64_t ip, struct _Unwind_Context *c)
 {
   if (memcmp(epm, eyecatcher, 8) != 0)
@@ -97,9 +98,12 @@ static int parse_epm(const uint8_t *epm, uint64_t ip, struct _Unwind_Context *c)
   const uint8_t *ppa1 = epm + off;
   if (ppa1[0] != 0x02 || ppa1[1] != 0xCE)
     return 0;
+  /* Länge ab dem EPM. ip ist meist eine Rücksprungadresse: nach einem Aufruf
+     am Funktionsende (z. B. _Unwind_Resume, raise) zeigt sie genau auf das
+     Ende und gehört noch zur Funktion -> ip - 1 prüfen */
   uint32_t codelen = get32(ppa1 + 16);
-  if (ip != 0 && (ip < (uint64_t)epm || ip >= (uint64_t)epm + codelen))
-    return 0;
+  if (ip != 0 && (ip <= (uint64_t)epm || ip - 1 >= (uint64_t)epm + codelen))
+    return -1;
   c->entry = (uint64_t)epm + 16;
   c->ppa1 = ppa1;
   c->epmflags = get32(epm + 12);
@@ -133,8 +137,14 @@ static int find_function(uint64_t ip, struct _Unwind_Context *c)
   const uint8_t *p = (const uint8_t *)((ip - 2) & ~(uint64_t)1);
   const uint8_t *limit = p - (16u << 20);   /* höchstens 16 MB zurück */
   for (; p > limit; p -= 2)
-    if (p[0] == 0x00 && p[1] == 0xC3 && parse_epm(p, ip, c))
-      return 1;
+    if (p[0] == 0x00 && p[1] == 0xC3) {
+      /* der erste EPM vor ip ist der einzige Kandidat: gehört ip nicht zu
+         dieser Funktion, dann zu keiner (weiter zurück zu suchen läuft nur
+         in nicht lesbaren Speicher) */
+      int r = parse_epm(p, ip, c);
+      if (r != 0)
+        return r > 0;
+    }
   return 0;
 }
 
