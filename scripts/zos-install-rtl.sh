@@ -1,5 +1,6 @@
 #!/bin/sh
-# Installiert die RTL-Objekte (GOFF) als z/OS-ar-Archiv $ZOS_DIR/lib/libfpc.a.
+# Installiert die RTL-Objekte (GOFF) als z/OS-ar-Archiv $ZOS_DIR/lib/libfpc.a
+# (mit --ns die Units mit Namensraum als lib/libfpcns.a).
 # zos-ld bindet dann gegen das Archiv (ld nimmt nur die benötigten Member) statt
 # bei jedem Programm alle RTL-Objekte hochzuladen. In WSL ausführen.
 #
@@ -13,6 +14,12 @@ SELF=$(readlink -f "$0")
 REPO=$(dirname "$SELF")/..
 PREFIX=${ZFPC_PREFIX:-$HOME/opt/zfpc}
 U=$PREFIX/units/zos
+LIB=libfpc.a
+# --ns (oder ZFPC_DOTTED=1): Units mit Namensraum (units/zos-ns) als lib/libfpcns.a
+if [ "$1" = --ns ] || [ "$ZFPC_DOTTED" = 1 ]; then
+  U=$PREFIX/units/zos-ns
+  LIB=libfpcns.a
+fi
 ENVFILE=${ZOS_ENV:-$REPO/.zos.env}
 WH=$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
 HOME=$WH . "$ENVFILE"
@@ -40,8 +47,8 @@ for part in "$WTMP"/zfpc-rtl.$$.part.*; do
   ssh.exe $SSHOPT "$ZOS_HOST" "cd $DIR/rtl && pax -rf ../rtl.tar && rm -f ../rtl.tar" || fail "pax"
 done
 rm -f "$T" "$WTMP"/zfpc-rtl.$$.part.*
-OUT=$(ssh.exe $SSHOPT "$ZOS_HOST" "cd $DIR && rm -f lib/libfpc.a && cd rtl && ar -rc ../lib/libfpc.a *.o && \
-  cd .. && rm -rf rtl && ls -l lib/libfpc.a && echo INSTALL-OK || { cd $DIR; rm -rf rtl rtl.tar; df -k .; }" 2>&1 \
+OUT=$(ssh.exe $SSHOPT "$ZOS_HOST" "cd $DIR && rm -f lib/$LIB && cd rtl && ar -rc ../lib/$LIB *.o && \
+  cd .. && rm -rf rtl && ls -l lib/$LIB && echo INSTALL-OK || { cd $DIR; rm -rf rtl rtl.tar; df -k .; }" 2>&1 \
   | sed -E "$MASK")
 echo "$OUT" | grep -v INSTALL-OK
 if ! echo "$OUT" | grep -q INSTALL-OK; then

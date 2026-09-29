@@ -1,0 +1,33 @@
+From 7d71a10eadcc7985243ebbece3491b4d4fde5845 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Tue, 29 Sep 2026 12:35:06 +0200
+Subject: [PATCH 40/41] pthreads: dotted unit names for z/OS
+
+The z/OS branch of the uses clause had no FPC_DOTTEDUNITS variant, so the
+namespaced build (UnixApi.Pthreads) looked for initc and failed, and with it
+every unit that uses pthreads.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ packages/pthreads/src/pthreads.pp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/pthreads/src/pthreads.pp b/packages/pthreads/src/pthreads.pp
+index 07fef731..22b0c85a 100644
+--- a/packages/pthreads/src/pthreads.pp
++++ b/packages/pthreads/src/pthreads.pp
+@@ -64,7 +64,11 @@ interface
+ {$elseif defined(zos)}
+   { the declarations of the run time library (rtl/zos/pthread.inc, also used by
+     cthreads) }
++{$IFDEF FPC_DOTTEDUNITS}
++  uses System.InitC, System.CTypes, UnixApi.Base, UnixApi.Types;
++{$ELSE FPC_DOTTEDUNITS}
+   uses initc, ctypes, baseunix, unixtype;
++{$ENDIF FPC_DOTTEDUNITS}
+   {$i pthread.inc}
+   const
+     PTHREAD_MUTEX_NORMAL     = _PTHREAD_MUTEX_NORMAL;
+-- 
+2.43.0
+

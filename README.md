@@ -45,6 +45,27 @@ Start-Skript). Zugangsdaten: `.zos.env` im Repo (nicht versioniert).
 
 VS Code (Tasks für Übersetzen, Ausführen, Batch über FTP/JES): [VSCODE.md](VSCODE.md).
 
+### Delphi-Quellen und Units mit Namensraum
+
+Delphi-Quelltext übersetzt FPC im Delphi-Modus (`{$MODE DELPHI}` / `{$MODE DELPHIUNICODE}`,
+`.dpr` geht). Für Units mit Namensraum wie in Delphi (`System.SysUtils`, `System.Classes`,
+`System.Generics.Collections`, `System.Rtti`, `Data.FMTBcd`, `FpJson.Data` …) gibt es einen
+zweiten Unit-Satz `~/opt/zfpc/units/zos-ns`, gebaut wie FPC mit `FPC_DOTTEDUNITS`:
+
+```sh
+ZFPC_DOTTED=1 sh scripts/build-rtl.sh --no-compiler   # RTL + Packages mit Namensraum
+sh scripts/zos-install-rtl.sh --ns                    # auf z/OS als lib/libfpcns.a
+sh scripts/zfpc --ns prog.dpr                          # (oder ZFPC_NS=1)
+```
+
+`zfpc --ns` setzt die Standard-Namensräume `System`, `System.Console`, `UnixApi`, `TP` und
+`Data`: auch `uses SysUtils, Classes, Crt, Dos` findet die Units (gemischt mit
+`System.Classes` im selben Programm: FPC-Patch 0041), weitere mit `-FN<namensraum>`. Einen
+Satz je Programm; Units ohne Namensraum aus dem anderen Satz passen nicht dazu. Ohne Namensraum
+bleiben wie bei FPC `system`, `objpas`, `heaptrc`, `iso7185`, `lnfodwrf`, `extpas`, `macpas`
+und die z/OS-Units `zosebcdic`, `zosrecio`. Nicht vorhanden (auch ohne Namensraum): VCL/FMX,
+FireDAC, Windows-, Apache- und Microhttpd-Anbindungen.
+
 ## Werkzeuge
 
 | Skript | Zweck |

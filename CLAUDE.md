@@ -245,6 +245,14 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   `lp1`: Funktion mit TBytes-Local + raise, `-O2`. Interface-Wrapper (FPC-Patch 0038).
   Fehlersuche: `ZOS_IRC_OPT`/`ZOS_IRC_LLC` (Stufen von opt/llc getrennt), `ZOS_UNWIND_DEBUG=1`.
   `zos-install-rtl.sh` lädt in Paketen (ZFS-Platz). `pidigits` ist nicht portabel (LE).
+- **Units mit Namensraum (29.09.2026):** zweiter Satz `units/zos-ns` (`ZFPC_DOTTED=1` für
+  build-rtl.sh/build-packages.sh, Hüllen aus `rtl/namespaced`, `packages/*/namespaced`),
+  `zfpc --ns` (-FNSystem,System.Console,UnixApi,TP,Data), Archiv `lib/libfpcns.a`
+  (`zos-install-rtl.sh --ns`; zos-ld wählt es nach dem Verzeichnisnamen). 392 Units. FPC-Patch
+  0040 (pthreads: z/OS-Zweig ohne Namensraum-Variante), 0041 (Compiler: `uses Classes` über
+  -FNSystem und `System.Classes` im selben Programm = zwei Module -> "Got TStringList, expected
+  TStrings"; betrifft auch FPC main). Übersetzt: Tests in `pf7/ns/`. z/OS-Lauf stand am
+  29.09.2026 aus: ZFS voll (zos-ld verlangt 60 MB frei, Archiv braucht ~52 MB).
 - VS Code: `VSCODE.md` (Erweiterung `vscode/`, Tasks, FTP/JES über `scripts/zos-jes.py`, Passwort nur
   in `~/.netrc` in WSL). Zowe Explorer und alefragnani.pascal will der Nutzer nicht („direkt einbauen“).
   z/OS-Debugger: Agent `runtime/zosdbg.c`, Instrumentierung `scripts/zdbg-instrument.py`, Adapter

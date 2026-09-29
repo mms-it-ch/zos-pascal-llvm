@@ -1,0 +1,85 @@
+From 5091d52d1bf050dcf001404d6336980afcc93a91 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Tue, 29 Sep 2026 12:35:06 +0200
+Subject: [PATCH 41/41] compiler: one module for a unit found through a default
+ namespace
+
+With -FNSystem, 'uses Classes' finds System.Classes.ppu but registers the
+module as CLASSES. A program that also uses System.Classes (directly or
+through another unit) then loads the same unit twice as two modules, and
+their types are incompatible (Got TStringList, expected TStrings).
+
+registerunit now also matches a loaded unit by the namespace it was found
+with (nsprefix + name), and maps a name without a dot through the default
+namespaces to an already loaded unit.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/fppu.pas | 41 +++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 39 insertions(+), 2 deletions(-)
+
+diff --git a/compiler/fppu.pas b/compiler/fppu.pas
+index 38860999..16c010c8 100644
+--- a/compiler/fppu.pas
++++ b/compiler/fppu.pas
+@@ -2767,6 +2767,29 @@ implementation
+ 
+       var
+         ups   : TIDString;
++
++      function find_namespaced(list: TCmdStrList): tppumodule;
++        var
++          nsitem : TCmdStrListItem;
++          full   : TIDString;
++        begin
++          result:=nil;
++          if not assigned(list) then
++            exit;
++          nsitem:=TCmdStrListItem(list.first);
++          while assigned(nsitem) do
++            begin
++              full:=upper(nsitem.str)+'.'+ups;
++              result:=tppumodule(loaded_units.first);
++              while assigned(result) and ((result.modulename^<>full) or not result.is_unit) do
++                result:=tppumodule(result.next);
++              if assigned(result) then
++                exit;
++              nsitem:=TCmdStrListItem(nsitem.next);
++            end;
++        end;
++
++      var
+         hp    : tppumodule;
+         cycle : TFPList;
+ {$IFDEF DEBUGCYCLE}
+@@ -2778,11 +2801,25 @@ implementation
+         { Info }
+         ups:=upper(s);
+ 
+-        { search all loaded units, skip program/library }
++        { search all loaded units, skip program/library; a unit that was found through a
++          default namespace (uses Classes -> System.Classes) also matches its full name }
+         hp:=tppumodule(loaded_units.first);
+-        while assigned(hp) and ((hp.modulename^<>ups) or not hp.is_unit) do
++        while assigned(hp) and
++              (not hp.is_unit or
++               ((hp.modulename^<>ups) and
++                ((hp.nsprefix='') or (upper(hp.nsprefix)+'.'+hp.modulename^<>ups)))) do
+           hp:=tppumodule(hp.next);
+ 
++        { a name without namespace that a default namespace maps to an already loaded
++          unit (uses Classes after uses System.Classes): the same module, not a second
++          one with the same contents (its types would be incompatible) }
++        if not assigned(hp) and (pos('.',ups)=0) then
++          begin
++            hp:=find_namespaced(current_namespacelist);
++            if not assigned(hp) then
++              hp:=find_namespaced(namespacelist);
++          end;
++
+         is_new:=not assigned(hp);
+         if is_new then
+         begin
+-- 
+2.43.0
+

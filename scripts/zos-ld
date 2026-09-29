@@ -86,7 +86,9 @@ while read -r kind path; do
     clib) clibs="$clibs $path" ;;
   esac
 done < "$LIST"
-[ $USELIB = 1 ] && libs="$libs $DIR/lib/libfpc.a"
+# Archiv zum Unit-Satz: units/zos -> libfpc.a, units/zos-ns (Namensraum) -> libfpcns.a
+RTLLIB=libfpc.a; [ "$(basename "$RTLDIR")" = zos-ns ] && RTLLIB=libfpcns.a
+[ $USELIB = 1 ] && libs="$libs $DIR/lib/$RTLLIB"
 
 # Zeilennummern für Backtraces (-gl): der Binder lädt die DWARF-Klassen nicht in
 # den Speicher, deshalb die Zeilentabellen (D_LINE) hier auslesen und als

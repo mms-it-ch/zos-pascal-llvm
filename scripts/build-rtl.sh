@@ -17,6 +17,15 @@ PREFIX=${PREFIX:-$HOME/opt/zfpc}
 CLANG=${ZOS_CLANG:-$HOME/build/llvm-zos/bin/clang}
 R=$FPCSRC/rtl
 U=$PREFIX/units/zos
+# ZFPC_DOTTED=1: Units mit Namensraum (System.SysUtils, System.Classes, UnixApi.Base, ...)
+# nach units/zos-ns, wie der FPC-Bau mit FPC_DOTTEDUNITS (Hüllen aus rtl/namespaced);
+# Programme wählen den Satz mit zfpc --ns. Beide Sätze nicht in einem Programm mischen.
+NS=""
+if [ "$ZFPC_DOTTED" = 1 ]; then
+  U=$PREFIX/units/zos-ns
+  NS="-dFPC_DOTTEDUNITS -Fu$R/namespaced/common -Fu$FPCSRC/packages/rtl-objpas/namespaced
+    -Fu$FPCSRC/packages/rtl-console/namespaced"
+fi
 
 mkdir -p "$PREFIX/bin" "$U"
 if [ "$1" != --no-compiler ]; then
@@ -33,7 +42,7 @@ RO=$FPCSRC/packages/rtl-objpas/src/inc
 RC=$FPCSRC/packages/rtl-console/src
 PPC="$PREFIX/bin/ppcs390x -Tzos -Clv17.0 -n -FD$PREFIX/bin -FU$U -Fu$U -dFPC_USE_LIBC
   -Fi$R/zos -Fi$R/unix -Fi$R/inc -Fi$R/s390x -Fi$R/objpas -Fi$R/objpas/sysutils -Fi$R/objpas/classes
-  -Fu$R/inc -Fu$R/unix -Fu$R/objpas -Fi$RO -Fu$RO -Fi$RC/inc -Fi$RC/unix -Fu$RC/unix $ZFPC_OPT"
+  -Fu$R/inc -Fu$R/unix -Fu$R/objpas -Fi$RO -Fu$RO -Fi$RC/inc -Fi$RC/unix -Fu$RC/unix $NS $ZFPC_OPT"
 rm -f "$U"/*.ppu "$U"/*.o.tmp
 
 # C-Laufzeit des Ports (Unwind-Schnittstelle, atomare Operationen)
@@ -48,14 +57,30 @@ cd "$R/zos"
 $PPC -Us -Sg system.pp
 # weitere Units; Abhängigkeiten übersetzt der Compiler selbst
 FAILED=""
-for u in objpas/objpas.pp inc/strings.pp unix/sysutils.pp objpas/math.pp \
-         objpas/typinfo.pp objpas/types.pp unix/classes.pp objpas/fgl.pp \
-         inc/getopts.pp unix/dos.pp "$RC/unix/crt.pp" inc/iso7185.pp inc/extpas.pp inc/macpas.pp \
-         unix/cwstring.pp unix/cthreads.pp inc/lnfodwrf.pp \
-         inc/heaptrc.pp inc/uuchar.pp inc/cmem.pp \
-         objpas/unicodedata.pas objpas/character.pas zos/zosebcdic.pp zos/zosrecio.pp \
-         "$RO/strutils.pp" "$RO/dateutils.pp" "$RO/variants.pp" "$RO/varutils.pp" \
-         "$RO/fmtbcd.pp" "$RO/rtti.pp" "$RO/nullable.pp" "$RO/tuples.pp"; do
+UNITS="objpas/objpas.pp inc/strings.pp unix/sysutils.pp objpas/math.pp
+       objpas/typinfo.pp objpas/types.pp unix/classes.pp objpas/fgl.pp
+       inc/getopts.pp unix/dos.pp $RC/unix/crt.pp inc/iso7185.pp inc/extpas.pp inc/macpas.pp
+       unix/cwstring.pp unix/cthreads.pp inc/lnfodwrf.pp
+       inc/heaptrc.pp inc/uuchar.pp inc/cmem.pp
+       objpas/unicodedata.pas objpas/character.pas zos/zosebcdic.pp zos/zosrecio.pp
+       $RO/strutils.pp $RO/dateutils.pp $RO/variants.pp $RO/varutils.pp
+       $RO/fmtbcd.pp $RO/rtti.pp $RO/nullable.pp $RO/tuples.pp"
+if [ "$ZFPC_DOTTED" = 1 ]; then
+  # dieselben Units über ihre Hüllen; ohne Hülle (objpas, extpas, heaptrc, ...) unter dem
+  # alten Namen, wie im FPC-Bau
+  N=$R/namespaced/common
+  NO=$FPCSRC/packages/rtl-objpas/namespaced
+  UNITS="objpas/objpas.pp $N/System.Strings.pp $N/System.SysUtils.pp $N/System.Math.pp
+         $N/System.TypInfo.pp $N/System.Types.pp $N/System.Classes.pp $N/System.FGL.pp
+         $N/System.GetOpts.pp $N/TP.DOS.pp $FPCSRC/packages/rtl-console/namespaced/System.Console.Crt.pp
+         inc/iso7185.pp inc/extpas.pp inc/macpas.pp
+         $N/UnixApi.CWString.pp $N/UnixApi.CThreads.pp inc/lnfodwrf.pp
+         inc/heaptrc.pp inc/uuchar.pp $N/System.CMem.pp
+         $N/System.CodePages.unicodedata.pas $N/System.Character.pas zos/zosebcdic.pp zos/zosrecio.pp
+         $NO/System.StrUtils.pp $NO/System.DateUtils.pp $NO/System.Variants.pp $NO/System.VarUtils.pp
+         $NO/Data.FMTBcd.pp $NO/System.Rtti.pp $NO/System.Nullable.pp $NO/System.Tuples.pp"
+fi
+for u in $UNITS; do
   case "$u" in /*) src=$u ;; *) src=$R/$u ;; esac
   $PPC -Sg "$src" || FAILED="$FAILED $(basename "$src")"
 done

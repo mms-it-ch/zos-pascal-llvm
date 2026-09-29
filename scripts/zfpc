@@ -1,10 +1,23 @@
 #!/bin/sh
 # zfpc: Free Pascal für z/OS (Cross-Compiler s390x/zos, LLVM-Backend).
 #
-#   zfpc [fpc-Optionen] prog.pas
+#   zfpc [--ns] [fpc-Optionen] prog.pas
 #
 # Übersetzt nach GOFF, bindet auf z/OS (zos-ld) und hinterlässt ./prog als
 # Start-Skript, das das Programm auf z/OS ausführt. Mit -s wird nur übersetzt.
+# --ns (oder ZFPC_NS=1): Units mit Namensraum wie in Delphi (System.SysUtils, System.Classes,
+# System.Generics.Collections, ...; Satz units/zos-ns, gebaut mit ZFPC_DOTTED=1 build-rtl.sh).
+# Standard-Namensräume System, System.Console, UnixApi, TP und Data: auch "uses SysUtils,
+# Classes, Crt, Dos" findet die Units; weitere mit -FN<namensraum>.
 # Umgebung: ZFPC_PREFIX (Standard ~/opt/zfpc), siehe scripts/build-rtl.sh.
 PREFIX=${ZFPC_PREFIX:-$HOME/opt/zfpc}
+NS=${ZFPC_NS:-0}
+for a in "$@"; do
+  shift
+  if [ "$a" = --ns ]; then NS=1; else set -- "$@" "$a"; fi
+done
+if [ "$NS" = 1 ]; then
+  exec "$PREFIX/bin/ppcs390x" -Tzos -Clv17.0 -n -FD"$PREFIX/bin" -Fu"$PREFIX/units/zos-ns" \
+    -FNSystem -FNSystem.Console -FNUnixApi -FNTP -FNData "$@"
+fi
 exec "$PREFIX/bin/ppcs390x" -Tzos -Clv17.0 -n -FD"$PREFIX/bin" -Fu"$PREFIX/units/zos" "$@"

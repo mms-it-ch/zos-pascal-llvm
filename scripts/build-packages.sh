@@ -20,6 +20,9 @@ TARGET=${ZFPC_PKG_TARGET:-zos}
 if [ "$TARGET" = zos ]; then
   U=$PREFIX/units/zos
   OSDIR=zos
+  # ZFPC_DOTTED=1: Units mit Namensraum (Hüllen aus <package>/namespaced) nach units/zos-ns,
+  # passend zur RTL aus ZFPC_DOTTED=1 build-rtl.sh
+  [ "$ZFPC_DOTTED" = 1 ] && U=$PREFIX/units/zos-ns
 else
   HOSTFPC=${HOSTFPC:-$HOME/opt/fpc-main}
   U=${ZFPC_PKG_UNITS:-$HOSTFPC/units/packages}
@@ -48,6 +51,17 @@ for p in $PKGS; do
     [ -d "$P/$d" ] && SP="$SP -Fu$P/$d -Fi$P/$d"
   done
 done
+# Namensraum: Hüllen je Package (bei fcl-web/src/... das ganze Package; Hüllen, deren
+# Quellen nicht im Suchpfad liegen, scheitern und fehlen dann wie ohne Namensraum)
+NSDIRS=""
+if [ "$ZFPC_DOTTED" = 1 ]; then
+  for p in $PKGS; do
+    d=${p%%/*}/namespaced
+    case " $NSDIRS " in *" $d "*) ;; *) [ -d "$P/$d" ] && NSDIRS="$NSDIRS $d" ;; esac
+  done
+  for d in $NSDIRS; do SP="$SP -Fu$P/$d"; done
+  SP="$SP -dFPC_DOTTEDUNITS"
+fi
 # rtl/zos: pthread.inc für die Unit pthreads
 if [ "$TARGET" = zos ]; then
   PPC="$PREFIX/bin/ppcs390x -Tzos -Clv17.0 -n -FD$PREFIX/bin -FU$U -Fu$U $SP -Fi$FPCSRC/rtl/zos $ZFPC_OPT"
@@ -74,8 +88,10 @@ fi
 #    Prüfsummen ändern sich, und Units, die sie benutzen, passen nicht mehr
 #    ("checksum changed", z. B. generics.collections/generics.defaults).
 ok=0; failed=""; units=""
-for p in $PKGS; do
-  case "$p" in */src/*) srcdirs="$p" ;; *) srcdirs="$p/src $p/src/inc $p/src/unix" ;; esac
+LOOP=$PKGS
+[ "$ZFPC_DOTTED" = 1 ] && LOOP=$NSDIRS
+for p in $LOOP; do
+  case "$p" in */src/*|*/namespaced) srcdirs="$p" ;; *) srcdirs="$p/src $p/src/inc $p/src/unix" ;; esac
   for d in $srcdirs; do
     for f in "$P/$d"/*.pp "$P/$d"/*.pas; do
       [ -f "$f" ] || continue
