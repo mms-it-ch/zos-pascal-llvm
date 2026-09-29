@@ -1,0 +1,39 @@
+From 96c73da5f9f86a755127c7d41d139adfb47a25e6 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Tue, 29 Sep 2026 06:50:27 +0200
+Subject: [PATCH] z/OS: exit hook for the debug agent before _exit
+
+FpExit is _exit on z/OS, so C atexit handlers never run. System_exit now
+calls FPC_ZOS_DBG_EXITHOOK if set, so the debug agent can forward the
+remaining program output and report the end of the program.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/zos/system.pp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+index c4161736..e520ae64 100644
+--- a/rtl/zos/system.pp
++++ b/rtl/zos/system.pp
+@@ -92,8 +92,17 @@ procedure FPC_SYSTEMMAIN(argcparam: Longint; argvparam: PPAnsiChar; envpparam: P
+ end;
+ 
+ 
++type
++  tzos_dbg_exit_hook = procedure; cdecl;
++var
++  { set by the debug agent (runtime/zosdbg.c): FpExit is _exit, so C atexit
++    handlers do not run; the agent forwards the remaining output here }
++  zos_dbg_exit_hook: tzos_dbg_exit_hook; public name 'FPC_ZOS_DBG_EXITHOOK';
++
+ procedure System_exit;
+ begin
++   if assigned(zos_dbg_exit_hook) then
++     zos_dbg_exit_hook();
+    Fpexit(cint(ExitCode));
+ End;
+ 
+-- 
+2.43.0
+

@@ -7,19 +7,22 @@
  *
  * Mit ZDBG=1 übernimmt der Agent stdin/stdout der ssh-Sitzung: die Programmausgabe (fd 1, 2)
  * läuft über eine Pipe und geht als "@@Z O <json>" hinaus, die Standardeingabe des Programms
- * ist /dev/null; Befehle kommen zeilenweise über stdin. sshd wandelt zwischen ASCII und
+ * kommt aus einer Pipe (Befehl IN); Befehle kommen zeilenweise über stdin. sshd wandelt zwischen ASCII und
  * EBCDIC (IBM-1047); der Agent schreibt deshalb EBCDIC und liest EBCDIC.
  *
  * Befehle (Adapter -> Agent)          Antworten/Ereignisse (Agent -> Adapter)
  *   B <datei> <zeile> ...               @@Z READY                 Agent bereit (vor Zeile 1)
- *   RUN | RUNSTOP                       @@Z STOP <grund> <zeile> <datei>
+ *   RUN | RUNSTOP                       @@Z STOP <grund> <zeile> <thread> <datei>
  *   C  N  I  O  P                       @@Z R <id> <json>         Antwort
- *   T <id>                              @@Z O <json-string>       Programmausgabe
- *   L <id> <frame>                      @@Z END                   Programmende
- *   V <id> <typ-hex> <adresse-hex>
- *   G <id> <frame>
+ *   H <id>                (Threads)     @@Z O <json-string>       Programmausgabe
+ *   T <id> <thread>                     @@Z END                   Programmende
+ *   L <id> <thread> <frame>
+ *   G <id> <thread> <frame>
+ *   V <id> <typ-hex>:<adresse-hex>
+ *   IN <json-string>   Standardeingabe;  EOF  Standardeingabe schließen
  *   X  (Programm beenden)
- * Nur der Thread, der als erster eine Routine betritt (Hauptprogramm), wird verfolgt.
+ * Jeder Thread hat eigene Frame-Sätze und eigenen Einzelschritt. Hält ein Thread an, bleiben
+ * die übrigen an ihrem nächsten Haken stehen, bis er weiterläuft.
  */
 #define _XOPEN_SOURCE 600
 #include <pthread.h>
@@ -30,6 +33,8 @@
 #include <strings.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <poll.h>
 
 void FPC_ZOS_A2E(unsigned char *p, long n);
 void FPC_ZOS_E2A(unsigned char *p, long n);
@@ -48,27 +53,36 @@ enum { K_UNKNOWN, K_INT, K_UINT, K_FLOAT, K_BOOL, K_CHAR, K_PTR, K_STRUCT, K_ARR
        K_SHORT, K_ENUM, K_CLASS, K_WCHAR, K_USTR, K_SET, K_REF };
 
 static int state;                 /* 0 unbekannt, 1 aus, 2 an */
-static pthread_t main_thread;
-static struct zrec *head;
 static int outfd = -1, cmdfd = -1;
+static int in_w = -1;             /* Schreibende der Standardeingabe des Programms */
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t outmu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
 static pthread_t out_thread, cmd_thread;
 static int out_pipe = -1;
+static pthread_key_t thr_key;
 
-/* Ablaufsteuerung (mu) */
+/* Ablaufsteuerung je Thread; ein Thread hält an, die anderen bleiben an ihrem
+   nächsten Haken stehen, bis er weiterläuft (mu) */
 enum { M_RUN, M_IN, M_OVER, M_OUT };
-static volatile int mode = M_RUN;
+#define MAXTHR 64
+struct thr {
+  pthread_t id;
+  int num;                        /* 1 = Hauptprogramm */
+  struct zrec *head;              /* innerster Frame-Satz */
+  int mode;
+  int step_depth;
+  struct zrec *stop_rec;
+  int stop_line;
+  int skip_same;                  /* nach dem Fortsetzen: gleiche Stelle nicht erneut melden */
+};
+static struct thr thrs[MAXTHR];
+static int nthr;
 static volatile int pause_req;
-static volatile int paused;       /* Programm-Thread wartet */
+static volatile int stopped;      /* Nummer des stehenden Threads, 0 = keiner */
 static volatile int resume_cmd;   /* 0 = keiner, sonst 'C','N','I','O' */
 static int started;               /* RUN empfangen */
 static int stop_at_entry;
-static int step_depth;
-static struct zrec *stop_rec;
-static int stop_line;
-static int skip_same;             /* nach dem Fortsetzen: gleiche Stelle nicht erneut melden */
 
 /* Haltepunkte: Datei (Basisname, ohne Groß-/Kleinschreibung) und Zeile */
 #define MAXBP 512
@@ -347,9 +361,14 @@ static void json_children(struct sb *b, const struct zt *t, const void *addr)
   sb_str(b, "]");
 }
 
-static struct zrec *frame_at(int k)
+static struct thr *thr_by_num(int n)
 {
-  struct zrec *r = head;
+  return n >= 1 && n <= nthr ? &thrs[n - 1] : 0;
+}
+
+static struct zrec *frame_at(struct thr *t, int k)
+{
+  struct zrec *r = t ? t->head : 0;
   while (r && k-- > 0)
     r = r->prev;
   return r;
@@ -359,6 +378,37 @@ static const char *basename_of(const char *f)
 {
   const char *s = strrchr(f, '/');
   return s ? s + 1 : f;
+}
+
+/* JSON-String ab dem Anführungszeichen dekodieren (\n, \", \\, \uXXXX bis 255) */
+static size_t json_decode(const char *s, char *out, size_t cap)
+{
+  size_t n = 0;
+  if (*s != '"')
+    return 0;
+  for (s++; *s && *s != '"' && n < cap; s++) {
+    if (*s != '\\') {
+      out[n++] = *s;
+      continue;
+    }
+    s++;
+    switch (*s) {
+    case 'n': out[n++] = '\n'; break;
+    case 't': out[n++] = '\t'; break;
+    case 'r': out[n++] = '\r'; break;
+    case 'u': {
+      unsigned v = 0;
+      for (int i = 1; i <= 4 && s[i]; i++)
+        v = v * 16 + (unsigned)(s[i] <= '9' ? s[i] - '0' : (s[i] | 0x20) - 'a' + 10);
+      out[n++] = (char)(v & 0xFF);
+      s += 4;
+      break;
+    }
+    case 0: return n;
+    default: out[n++] = *s; break;
+    }
+  }
+  return n;
 }
 
 /* ---------- Befehle ---------- */
@@ -402,7 +452,7 @@ static void do_cmd(char *line)
   }
   if (strlen(line) == 1 && strchr("CNIO", line[0])) {
     pthread_mutex_lock(&mu);
-    if (paused) {
+    if (stopped) {
       resume_cmd = line[0];
       pthread_cond_broadcast(&cv);
     }
@@ -413,27 +463,54 @@ static void do_cmd(char *line)
     pause_req = 1;
     return;
   }
-  if (!strcmp(line, "X")) {
+  if (!strcmp(line, "X"))
     _exit(143);
+  if (!strcmp(line, "IN")) {
+    /* IN <json-string>: an die Standardeingabe des Programms */
+    char buf[4096];
+    size_t n = json_decode(arg, buf, sizeof buf);
+    if (in_w >= 0 && n > 0)
+      write(in_w, buf, n);
+    return;
   }
-  /* Abfragen nur, wenn das Programm steht */
+  if (!strcmp(line, "EOF")) {
+    if (in_w >= 0)
+      close(in_w);
+    in_w = -1;
+    return;
+  }
+  /* Abfragen nur, wenn ein Thread steht (die anderen warten an ihrem nächsten Haken) */
   char *id = strtok(arg, " ");
   if (!id)
     return;
   sb_fmt(&b, "@@Z R %s ", id);
-  pthread_mutex_lock(&mu);
-  int ok = paused;
-  pthread_mutex_unlock(&mu);
-  if (!ok) {
+  if (!stopped) {
     sb_str(&b, "null");
     send_sb(&b);
     return;
   }
-  if (!strcmp(line, "T")) {
+  if (!strcmp(line, "H")) {
     int first = 1;
     sb_str(&b, "[");
-    for (struct zrec *r = head; r; r = r->prev) {
-      if (r->line == 0 && r != head)
+    for (int i = 0; i < nthr; i++) {
+      if (!thrs[i].head)
+        continue;
+      if (!first)
+        sb_str(&b, ",");
+      first = 0;
+      if (thrs[i].num == 1)
+        sb_fmt(&b, "{\"id\":1,\"name\":\"Hauptprogramm\"}");
+      else
+        sb_fmt(&b, "{\"id\":%d,\"name\":\"Thread %d\"}", thrs[i].num, thrs[i].num);
+    }
+    sb_str(&b, "]");
+  } else if (!strcmp(line, "T")) {
+    char *ts = strtok(0, " ");
+    struct thr *t = thr_by_num(ts ? atoi(ts) : stopped);
+    int first = 1;
+    sb_str(&b, "[");
+    for (struct zrec *r = t ? t->head : 0; r; r = r->prev) {
+      if (r->line == 0 && r != t->head)
         continue; /* noch ohne Zeile (Einstieg "main" vor PASCALMAIN) */
       if (!first)
         sb_str(&b, ",");
@@ -445,36 +522,29 @@ static void do_cmd(char *line)
       sb_fmt(&b, ",\"line\":%d}", r->line);
     }
     sb_str(&b, "]");
-  } else if (!strcmp(line, "L")) {
+  } else if (!strcmp(line, "L") || !strcmp(line, "G")) {
+    char *ts = strtok(0, " ");
     char *fs = strtok(0, " ");
-    struct zrec *r = frame_at(fs ? atoi(fs) : 0);
+    struct zrec *r = frame_at(thr_by_num(ts ? atoi(ts) : stopped), fs ? atoi(fs) : 0);
     int first = 1;
     sb_str(&b, "[");
-    if (r)
+    if (r && line[0] == 'L')
       for (int i = 0; i < r->fn->nvars; i++)
         json_var(&b, r->fn->vars[i].name, r->fn->vars[i].type, r->vars[i], &first);
-    sb_str(&b, "]");
-  } else if (!strcmp(line, "G")) {
-    char *fs = strtok(0, " ");
-    struct zrec *r = frame_at(fs ? atoi(fs) : 0);
-    int first = 1;
-    sb_str(&b, "[");
-    if (r && r->fn->mod)
+    if (r && line[0] == 'G' && r->fn->mod)
       for (int i = 0; i < r->fn->mod->n; i++)
         json_var(&b, r->fn->mod->globals[i].name, r->fn->mod->globals[i].type, r->fn->mod->globals[i].addr, &first);
     sb_str(&b, "]");
   } else if (!strcmp(line, "V")) {
     char *ts = strtok(0, " ");
-    if (ts) {
-      char *colon = strchr(ts, ':');
-      if (colon) {
-        *colon = 0;
-        const struct zt *t = (const struct zt *)(uintptr_t)strtoull(ts, 0, 16);
-        const void *a = (const void *)(uintptr_t)strtoull(colon + 1, 0, 16);
-        json_children(&b, t, a);
-      } else {
-        sb_str(&b, "[]");
-      }
+    char *colon = ts ? strchr(ts, ':') : 0;
+    if (colon) {
+      *colon = 0;
+      const struct zt *t = (const struct zt *)(uintptr_t)strtoull(ts, 0, 16);
+      const void *a = (const void *)(uintptr_t)strtoull(colon + 1, 0, 16);
+      json_children(&b, t, a);
+    } else {
+      sb_str(&b, "[]");
     }
   } else {
     sb_str(&b, "null");
@@ -485,7 +555,7 @@ static void do_cmd(char *line)
 static void *cmd_main(void *u)
 {
   (void)u;
-  char buf[4096];
+  char buf[8192];
   size_t n = 0;
   for (;;) {
     ssize_t r = read(cmdfd, buf + n, sizeof buf - 1 - n);
@@ -511,12 +581,18 @@ static void *cmd_main(void *u)
   return 0;
 }
 
-static void *out_main(void *u)
+/* Programmausgabe aus der Pipe weitergeben, bis sie leer ist (Leseende nicht blockierend).
+   Unter drainmu, damit STOP/END erst nach der Ausgabe davor hinausgehen. 0 = Pipe zu. */
+static pthread_mutex_t drainmu = PTHREAD_MUTEX_INITIALIZER;
+static int drain(void)
 {
-  (void)u;
   char buf[2048];
+  int open = 1;
+  pthread_mutex_lock(&drainmu);
   for (;;) {
     ssize_t r = read(out_pipe, buf, sizeof buf);
+    if (r == 0)
+      open = 0;
     if (r <= 0)
       break;
     struct sb b = { 0 };
@@ -524,20 +600,66 @@ static void *out_main(void *u)
     sb_json(&b, buf, (size_t)r);
     send_sb(&b);
   }
+  pthread_mutex_unlock(&drainmu);
+  return open;
+}
+
+static void *out_main(void *u)
+{
+  (void)u;
+  struct pollfd pf = { out_pipe, POLLIN, 0 };
+  for (;;) {
+    pf.revents = 0;
+    if (poll(&pf, 1, -1) < 0 && errno != EINTR)
+      break;
+    if (!drain())
+      break;
+  }
   return 0;
 }
 
-static void at_end(void)
+/* Programmende. FpExit ist auf z/OS _exit (atexit läuft nicht): die RTL ruft
+   FPC_ZOS_DBG_EXIT vorher selbst; atexit deckt Programme ab, die exit() rufen. */
+void FPC_ZOS_DBG_EXIT(void)
 {
   if (state != 2)
     return;
-  /* Programmausgabe abschließen: Schreibenden schließen, Leser leeren lassen */
+  state = 1;
+  /* Programmausgabe abschließen: Schreibenden schließen, Rest weitergeben */
   fflush(stdout);
   fflush(stderr);
   close(1);
   close(2);
-  pthread_join(out_thread, 0);
+  drain();
   send_raw("@@Z END\n", 8);
+}
+
+static void at_end(void)
+{
+  FPC_ZOS_DBG_EXIT();
+}
+
+/* Haken in System_exit der z/OS-RTL (rtl/zos/system.pp) */
+extern void (*FPC_ZOS_DBG_EXITHOOK)(void);
+
+static struct thr *self_thr(void)
+{
+  struct thr *t = pthread_getspecific(thr_key);
+  if (t)
+    return t;
+  pthread_mutex_lock(&mu);
+  if (nthr < MAXTHR) {
+    t = &thrs[nthr];
+    memset(t, 0, sizeof *t);
+    t->id = pthread_self();
+    t->num = ++nthr;
+    if (t->num == 1 && stop_at_entry)
+      t->mode = M_IN;
+  }
+  pthread_mutex_unlock(&mu);
+  if (t)
+    pthread_setspecific(thr_key, t);
+  return t;
 }
 
 static void init(void)
@@ -547,34 +669,33 @@ static void init(void)
     state = 1;
     return;
   }
-  main_thread = pthread_self();
   outfd = dup(1);
   cmdfd = dup(0);
-  int p[2];
-  if (outfd < 0 || cmdfd < 0 || pipe(p) != 0) {
+  int p[2], ip[2];
+  if (outfd < 0 || cmdfd < 0 || pipe(p) != 0 || pipe(ip) != 0 ||
+      pthread_key_create(&thr_key, 0) != 0) {
     state = 1;
     return;
   }
+  /* Programmausgabe über eine Pipe, Standardeingabe aus einer Pipe (IN-Befehle) */
   dup2(p[1], 1);
   dup2(p[1], 2);
   close(p[1]);
   out_pipe = p[0];
-  int nul = open("/dev/null", O_RDONLY);
-  if (nul >= 0) {
-    dup2(nul, 0);
-    close(nul);
-  }
+  fcntl(out_pipe, F_SETFL, fcntl(out_pipe, F_GETFL) | O_NONBLOCK);
+  dup2(ip[0], 0);
+  close(ip[0]);
+  in_w = ip[1];
   state = 2;
   pthread_create(&out_thread, 0, out_main, 0);
   pthread_create(&cmd_thread, 0, cmd_main, 0);
+  FPC_ZOS_DBG_EXITHOOK = FPC_ZOS_DBG_EXIT;
   atexit(at_end);
   send_raw("@@Z READY\n", 10);
   /* auf Haltepunkte und RUN warten */
   pthread_mutex_lock(&mu);
   while (!started)
     pthread_cond_wait(&cv, &mu);
-  if (stop_at_entry)
-    mode = M_IN;
   pthread_mutex_unlock(&mu);
 }
 
@@ -599,28 +720,44 @@ static int bp_hit(struct zrec *r, int line)
   return hit;
 }
 
-static void stop(struct zrec *r, int line, const char *why)
+/* Steht ein anderer Thread, an diesem Haken warten. */
+static void wait_while_stopped(struct thr *t)
+{
+  if (!stopped || stopped == t->num)
+    return;
+  pthread_mutex_lock(&mu);
+  while (stopped && stopped != t->num)
+    pthread_cond_wait(&cv, &mu);
+  pthread_mutex_unlock(&mu);
+}
+
+static void stop(struct thr *t, struct zrec *r, int line, const char *why)
 {
   fflush(stdout);
-  struct sb b = { 0 };
-  sb_fmt(&b, "@@Z STOP %s %d ", why, line);
-  sb_json(&b, r->fn->file, strlen(r->fn->file));
   pthread_mutex_lock(&mu);
-  paused = 1;
+  while (stopped && stopped != t->num)
+    pthread_cond_wait(&cv, &mu);
+  stopped = t->num;
   resume_cmd = 0;
   pause_req = 0;
   pthread_mutex_unlock(&mu);
+  drain(); /* Ausgabe bis hierher vor der Meldung */
+  struct sb b = { 0 };
+  sb_fmt(&b, "@@Z STOP %s %d %d ", why, line, t->num);
+  sb_json(&b, r->fn->file, strlen(r->fn->file));
   send_sb(&b);
   pthread_mutex_lock(&mu);
   while (!resume_cmd)
     pthread_cond_wait(&cv, &mu);
   int c = resume_cmd;
-  paused = 0;
-  stop_rec = r;
-  stop_line = line;
-  skip_same = 1;
-  step_depth = depth_of(r);
-  mode = c == 'I' ? M_IN : c == 'N' ? M_OVER : c == 'O' ? M_OUT : M_RUN;
+  resume_cmd = 0;
+  t->stop_rec = r;
+  t->stop_line = line;
+  t->skip_same = 1;
+  t->step_depth = depth_of(r);
+  t->mode = c == 'I' ? M_IN : c == 'N' ? M_OVER : c == 'O' ? M_OUT : M_RUN;
+  stopped = 0;
+  pthread_cond_broadcast(&cv);
   pthread_mutex_unlock(&mu);
 }
 
@@ -633,51 +770,55 @@ void FPC_ZOS_DBG_ENTER(struct zrec *r)
     if (state != 2)
       return;
   }
-  if (!pthread_equal(pthread_self(), main_thread))
+  struct thr *t = self_thr();
+  if (!t)
     return;
   r->line = 0;
   /* Sätze beendeter Routinen verwerfen: der Stack wächst nach unten, ein lebender
      Aufrufer liegt oberhalb des neuen Satzes (Routinen, die aus nicht instrumentiertem
      Code aufgerufen wurden und zurückgekehrt sind, tragen sich nicht aus) */
-  while (head && (uintptr_t)head <= (uintptr_t)r)
-    head = head->prev;
-  r->prev = head;
-  head = r;
+  while (t->head && (uintptr_t)t->head <= (uintptr_t)r)
+    t->head = t->head->prev;
+  r->prev = t->head;
+  t->head = r;
 }
 
 void FPC_ZOS_DBG_LINE(struct zrec *r, int line)
 {
   if (state != 2)
     return;
-  if (!pthread_equal(pthread_self(), main_thread))
+  struct thr *t = self_thr();
+  if (!t)
     return;
   r->line = line;
-  head = r;
-  if (skip_same) {
+  t->head = r;
+  if (stopped)
+    wait_while_stopped(t);
+  if (t->skip_same) {
     /* eine Zeile kann aus mehreren Grundblöcken bestehen, auch nach Aufrufen aus ihr:
        erst ein Zeilenwechsel in derselben Routine oder ihr Verlassen beendet das */
-    if (r == stop_rec) {
-      if (line == stop_line)
+    if (r == t->stop_rec) {
+      if (line == t->stop_line)
         return;
-      skip_same = 0;
-    } else if (depth_of(r) < step_depth) {
-      skip_same = 0;
+      t->skip_same = 0;
+    } else if (depth_of(r) < t->step_depth) {
+      t->skip_same = 0;
     }
   }
-  int m = mode;
+  int m = t->mode;
   if (m == M_RUN && !pause_req && !(bpmask[(line >> 3) & 511] & (1u << (line & 7))))
     return; /* schneller Weg */
   if (pause_req) {
-    stop(r, line, "pause");
+    stop(t, r, line, "pause");
     return;
   }
   if (m != M_RUN) {
     int d = depth_of(r);
-    if (m == M_IN || (m == M_OVER && d <= step_depth) || (m == M_OUT && d < step_depth)) {
-      stop(r, line, stop_rec ? "step" : "entry");
+    if (m == M_IN || (m == M_OVER && d <= t->step_depth) || (m == M_OUT && d < t->step_depth)) {
+      stop(t, r, line, t->stop_rec ? "step" : "entry");
       return;
     }
   }
   if (bp_hit(r, line))
-    stop(r, line, "breakpoint");
+    stop(t, r, line, "breakpoint");
 }

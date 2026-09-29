@@ -1,6 +1,8 @@
 // Debug-Adapter für Pascal auf z/OS (target "zos"). Spricht mit dem Debug-Agenten im
 // Programm (runtime/zosdbg.c) über die ssh-Sitzung: Zeilen "@@Z ..." vom Agenten,
 // Befehle zeilenweise auf stdin. Portweiterleitung ist auf z/OS gesperrt, deshalb stdio.
+// Eingaben in der Debugkonsole gehen an die Standardeingabe des Programms, solange es läuft
+// (angehalten: mit führendem '>'); '^D' schließt die Standardeingabe.
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -52,6 +54,8 @@ export class ZosDebugSession implements vscode.DebugAdapter {
   private readonly sourceCache = new Map<string, string | undefined>();
   private exitCode: number | undefined;
   private ended = false;
+  private stoppedThread = 0; // 0 = Programm läuft
+  private threads: { id: number; name: string }[] = [{ id: 1, name: 'Hauptprogramm' }];
 
   constructor(private readonly builder: Builder, private readonly out: vscode.OutputChannel) {}
 
@@ -110,21 +114,30 @@ export class ZosDebugSession implements vscode.DebugAdapter {
         this.respond(req);
         this.maybeStart();
         return;
-      case 'threads':
-        this.respond(req, { threads: [{ id: 1, name: 'Hauptprogramm' }] });
+      case 'threads': {
+        // Threadliste nur, solange einer steht (sonst die zuletzt bekannte)
+        if (this.stoppedThread) {
+          const t: any[] | undefined = await this.query('H');
+          if (Array.isArray(t) && t.length) {
+            this.threads = t.map((x) => ({ id: +x.id, name: String(x.name) }));
+          }
+        }
+        this.respond(req, { threads: this.threads });
         return;
+      }
       case 'stackTrace': {
-        const frames: any[] = (await this.query('T')) ?? [];
+        const tid = +(a.threadId ?? this.stoppedThread) || 1;
+        const frames: any[] = (await this.query('T', String(tid))) ?? [];
         const stackFrames = await Promise.all(frames.map(async (f, i) => {
           const p = await this.localSource(f.file);
-          return { id: i, name: f.name, line: f.line || 1, column: 1,
+          return { id: tid * 1000 + i, name: f.name, line: f.line || 1, column: 1,
             source: p ? { name: path.basename(p), path: p } : { name: f.file } };
         }));
         this.respond(req, { stackFrames, totalFrames: stackFrames.length });
         return;
       }
       case 'scopes': {
-        const f = a.frameId ?? 0;
+        const f = this.frameArg(a.frameId);
         this.respond(req, { scopes: [
           { name: 'Lokal', variablesReference: this.ref(`L ${f}`), expensive: false },
           { name: 'Global', variablesReference: this.ref(`G ${f}`), expensive: true },
@@ -140,7 +153,13 @@ export class ZosDebugSession implements vscode.DebugAdapter {
         return;
       }
       case 'evaluate': {
-        const v = await this.evaluate(String(a.expression ?? ''), a.frameId ?? 0);
+        const expr = String(a.expression ?? '');
+        if (a.context === 'repl' && (!this.stoppedThread || expr.startsWith('>'))) {
+          this.input(this.stoppedThread ? expr.slice(1) : expr);
+          this.respond(req, { result: '', variablesReference: 0 });
+          return;
+        }
+        const v = await this.evaluate(expr, this.frameArg(a.frameId));
         if (v) {
           this.respond(req, { result: v.value, type: v.type, variablesReference: v.ref ? this.ref(`V ${v.ref}`) : 0 });
         } else {
@@ -149,18 +168,22 @@ export class ZosDebugSession implements vscode.DebugAdapter {
         return;
       }
       case 'continue':
+        this.stoppedThread = 0;
         this.write('C');
         this.respond(req, { allThreadsContinued: true });
         return;
       case 'next':
+        this.stoppedThread = 0;
         this.write('N');
         this.respond(req);
         return;
       case 'stepIn':
+        this.stoppedThread = 0;
         this.write('I');
         this.respond(req);
         return;
       case 'stepOut':
+        this.stoppedThread = 0;
         this.write('O');
         this.respond(req);
         return;
@@ -184,24 +207,62 @@ export class ZosDebugSession implements vscode.DebugAdapter {
     return this.varRefs.length - 1;
   }
 
-  /** Ausdruck: Name einer lokalen/globalen Variablen, Felder mit Punkt (a.b.c). */
-  private async evaluate(expr: string, frame: number): Promise<any | undefined> {
-    const parts = expr.trim().split('.').map((s) => s.trim().toLowerCase()).filter((s) => s);
-    if (!parts.length) {
+  /** frameId (Thread*1000 + Frame) -> "thread frame" für L/G */
+  private frameArg(frameId: unknown): string {
+    const n = typeof frameId === 'number' ? frameId : (this.stoppedThread || 1) * 1000;
+    return `${Math.floor(n / 1000)} ${n % 1000}`;
+  }
+
+  /** Text als Programmeingabe (eine Zeile); '^D' schließt die Standardeingabe. */
+  private input(text: string): void {
+    if (text.trim() === '^D') {
+      this.write('EOF');
+      return;
+    }
+    // nur ASCII auf der Leitung (sshd wandelt nach EBCDIC); Latin-1 als \u00XX
+    const js = JSON.stringify(text + '\n').replace(/[\u0080-￿]/g,
+      (c) => c.charCodeAt(0) < 256 ? '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0') : '?');
+    this.write(`IN ${js}`);
+  }
+
+  /** Ausdruck: Variable, danach Felder (.x), Indizes ([3], [1,2]) und Dereferenzierung (^),
+   *  z. B. pt.x, arr[3], pp^.y, liste^.naechster^.wert. */
+  private async evaluate(expr: string, frame: string): Promise<any | undefined> {
+    const toks = /^\s*([A-Za-z_][A-Za-z0-9_]*)((?:\s*(?:\.\s*[A-Za-z_][A-Za-z0-9_]*|\[[^\]]*\]|\^))*)\s*$/.exec(expr);
+    if (!toks) {
       return undefined;
     }
-    let list: any[] = (await this.query('L', String(frame))) ?? [];
-    let v = list.find((x) => String(x.name).toLowerCase() === parts[0]);
-    if (!v) {
-      list = (await this.query('G', String(frame))) ?? [];
-      v = list.find((x) => String(x.name).toLowerCase() === parts[0]);
+    const steps: string[] = [];
+    for (const m of toks[2].matchAll(/\.\s*([A-Za-z_][A-Za-z0-9_]*)|\[([^\]]*)\]|\^/g)) {
+      if (m[1] !== undefined) {
+        steps.push(m[1].toLowerCase());
+      } else if (m[2] !== undefined) {
+        for (const ix of m[2].split(',')) {
+          steps.push(`[${ix.trim().toLowerCase()}]`);
+        }
+      } else {
+        steps.push('^');
+      }
     }
-    for (const p of parts.slice(1)) {
+    const name = toks[1].toLowerCase();
+    let list: any[] = (await this.query('L', frame)) ?? [];
+    let v = list.find((x) => String(x.name).toLowerCase() === name);
+    if (!v) {
+      list = (await this.query('G', frame)) ?? [];
+      v = list.find((x) => String(x.name).toLowerCase() === name);
+    }
+    for (const p of steps) {
       if (!v?.ref) {
         return undefined;
       }
-      const kids: any[] = (await this.query('V', v.ref)) ?? [];
-      v = kids.find((x) => String(x.name).toLowerCase() === p);
+      let kids: any[] = (await this.query('V', v.ref)) ?? [];
+      let k = kids.find((x) => String(x.name).toLowerCase() === p);
+      // Feld über einen Zeiger ohne ^ (p.x wie p^.x)
+      if (!k && p !== '^' && kids.length === 1 && kids[0].name === '^' && kids[0].ref) {
+        kids = (await this.query('V', kids[0].ref)) ?? [];
+        k = kids.find((x) => String(x.name).toLowerCase() === p);
+      }
+      v = k;
     }
     return v;
   }
@@ -304,11 +365,12 @@ export class ZosDebugSession implements vscode.DebugAdapter {
         this.output(rest.slice(2) + '\n');
       }
     } else if (rest.startsWith('STOP ')) {
-      const m = /^STOP (\S+) (\d+) (.*)$/.exec(rest);
+      const m = /^STOP (\S+) (\d+) (\d+) (.*)$/.exec(rest);
       const reason = m?.[1] === 'breakpoint' ? 'breakpoint' : m?.[1] === 'pause' ? 'pause'
         : m?.[1] === 'entry' ? 'entry' : 'step';
       this.varRefs.length = 1;
-      this.event('stopped', { reason, threadId: 1, allThreadsStopped: true });
+      this.stoppedThread = m ? +m[3] : 1;
+      this.event('stopped', { reason, threadId: this.stoppedThread, allThreadsStopped: true });
     } else if (rest.startsWith('R ')) {
       const m = /^R (\d+) (.*)$/.exec(rest);
       if (m) {

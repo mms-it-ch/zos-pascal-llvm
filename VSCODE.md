@@ -38,8 +38,13 @@ Bauen: `cd vscode && npm install && npm run compile && npm run package`, dann in
   mit dem Debug-Agenten im Programm. Haltepunkte, Halt am Anfang (`stopAtEntry`), Schritt
   über/hinein/hinaus, Pause, Aufrufliste mit Zeilen, lokale und globale Variablen (Zahlen,
   Boolean, Zeichen, Aufzählungen, AnsiString/ShortString/UnicodeString, Records, Arrays,
-  Zeiger/Objekte aufklappbar), Hover und Überwachen (`name`, `a.b.c`). Programmausgabe in der
-  Debugkonsole; die Standardeingabe des Programms ist leer.
+  Zeiger/Objekte aufklappbar), Hover und Überwachen mit Ausdrücken aus Variable, Feldern,
+  Indizes und Dereferenzierung (`pt.x`, `arr[3]`, `m[1,2]`, `pp^.y`, `liste^.next^.wert`).
+  Threads: jeder Thread (TThread, BeginThread) erscheint in der Aufrufliste mit eigenem Stack
+  und eigenem Einzelschritt; hält einer an, bleiben die anderen an ihrer nächsten Zeile stehen.
+  Programmausgabe sofort in der Debugkonsole (vor jeder Haltemeldung weitergegeben).
+  Standardeingabe: Text in der Debugkonsole geht als Zeile an das laufende Programm (`readln`);
+  während es angehalten ist, mit führendem `>`; `^D` schließt die Standardeingabe (EOF).
   - Aufbau: `scripts/zdbg-instrument.py` (in `zos-irc`) fügt ins LLVM-IR je Routine einen
     Frame-Satz (Adressen der Variablen aus `llvm.dbg.declare`) und vor jeder neuen Quellzeile
     `FPC_ZOS_DBG_LINE` ein, dazu Typbeschreibungen aus den DWARF-Metadaten. Der Agent
@@ -47,11 +52,14 @@ Bauen: `cd vscode && npm install && npm run compile && npm run package`, dann in
   - Verbindung: Portweiterleitung ist auf dem z/OS-sshd gesperrt; der Agent übernimmt stdin/stdout
     der ssh-Sitzung (Zeilen `@@Z …`, Programmausgabe über eine Pipe) und gleicht die
     ASCII/EBCDIC-Wandlung des sshd aus.
-  - Grenzen: nur der Haupt-Thread; RTL und Packages sind nicht instrumentiert (Schritt hinein
-    läuft über sie hinweg); reine Assembler-Routinen (naked) werden ausgelassen; keine
-    Ausdrücke außer Variablen/Feldern; eine Zeile, die sich selbst wiederholt
+  - Programmende: `FpExit` ist auf z/OS `_exit` (atexit läuft nicht); `System_exit` ruft den
+    vom Agenten gesetzten Haken `FPC_ZOS_DBG_EXITHOOK`, damit die restliche Ausgabe ankommt.
+  - Grenzen: RTL und Packages sind nicht instrumentiert (Schritt hinein läuft über sie hinweg,
+    Threads erscheinen erst ab ihrer ersten instrumentierten Routine); reine
+    Assembler-Routinen (naked) werden ausgelassen; Ausdrücke ohne Rechnen und Aufrufe
+    (Indizes nur als Konstante); eine Zeile, die sich selbst wiederholt
     (`while x do inc(i);` in einer Zeile), läuft beim Einzelschritt ganz durch.
-  - Test: `bt.pas` auf z/OS (Haltepunkt, Schritte, Aufrufliste, Variablen); lokal nachgebaut mit
+  - Test: `bt.pas`, `pf5/dbgtest.pas` (zweiter Thread, readln, Zeiger/Array) auf z/OS; lokal nachgebaut mit
     dem x86_64-LLVM-FPC (siehe CLAUDE.md).
 
 ## Tasks (`.vscode/tasks.json`, ohne Erweiterung)

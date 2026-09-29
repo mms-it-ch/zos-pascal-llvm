@@ -251,7 +251,10 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   `vscode/src/zosdebug.ts`. Lokal testen ohne z/OS: `~/build/fpc-llvm-x64/compiler/ppcx64 -Clv17.0 -g -O- -s`,
   IR instrumentieren, Agent mit clang für Linux + Attrappe für FPC_ZOS_A2E/E2A und `__dso_handle`
   (`-k`), `--eh-frame-hdr` aus ppas.sh; Befehle über stdin. naked-Funktionen nie instrumentieren
-  (Absturz 28.09.2026, 2 Dumps).
+  (Absturz 28.09.2026, 2 Dumps). Attrappe braucht auch `FPC_ZOS_DBG_EXITHOOK` (Haken in
+  rtl/zos/system.pp System_exit, weil FpExit = _exit). Protokoll mit Threads (H, T/L/G mit
+  Thread-Nummer, STOP mit Thread) und Standardeingabe (IN <json>, EOF); Test `pf5/dbgtest.pas`
+  (29.09.2026 lokal und z/OS, 0 Dumps).
 - **JCL: JOB-Karte immer mit `REGION=0M,LINES=500000`.**
 - **Host und User-ID nie ins Repo schreiben**; Zugangsdaten nur in `.zos.env` (nicht versioniert).
   Eigenes USS-Verzeichnis `…/ZPAS` mit eigenem ZFS (getrennt von anderen Verzeichnissen und vom Home-ZFS, das der Testlauf am 27.09.2026 einmal vollgeschrieben hat). Bei Ausgaben von
