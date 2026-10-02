@@ -1,0 +1,103 @@
+From 5873409f1d7cb226728204a3a3e20ed787b7b95d Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Fri, 2 Oct 2026 08:59:55 +0200
+Subject: [PATCH] [SystemZ][z/OS] Restore the frame header on stack restore
+
+@@ALCAXP, which lowerDYNAMIC_STACKALLOC_XPLINK calls for a dynamic alloca,
+moves the frame header (register save area at SP + 2048) down with the
+stack pointer. Calls made while the stack pointer is lowered place their
+arguments over the old header. lowerSTACKRESTORE only reset the stack
+pointer, so the epilogue and the LE stack walk then used the clobbered old
+header; the program ended with abend U4083 RSN 0F.
+
+Copy the current header to the restored stack pointer, from the highest
+word down (the restored stack pointer is never below the current one).
+
+Found with flang: character temporaries of run-time length are allocated
+between llvm.stacksave and llvm.stackrestore.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ .../Target/SystemZ/SystemZISelLowering.cpp    | 26 +++++++++++++++
+ llvm/test/CodeGen/SystemZ/zos-stackrestore.ll | 32 +++++++++++++++++++
+ 2 files changed, 58 insertions(+)
+ create mode 100644 llvm/test/CodeGen/SystemZ/zos-stackrestore.ll
+
+diff --git a/llvm/lib/Target/SystemZ/SystemZISelLowering.cpp b/llvm/lib/Target/SystemZ/SystemZISelLowering.cpp
+index eae2f8998..3fbccf6ba 100644
+--- a/llvm/lib/Target/SystemZ/SystemZISelLowering.cpp
++++ b/llvm/lib/Target/SystemZ/SystemZISelLowering.cpp
+@@ -5408,6 +5408,32 @@ SDValue SystemZTargetLowering::lowerSTACKRESTORE(SDValue Op,
+                             MachinePointerInfo());
+   }
+ 
++  // XPLINK: @@ALCAXP (lowerDYNAMIC_STACKALLOC_XPLINK) moves the frame header
++  // (register save area and reserved words at SP + bias) down with the stack
++  // pointer, and calls made while the stack pointer is lowered place their
++  // arguments over the old header. Copy the current header back to the
++  // restored stack pointer, otherwise the epilogue and the LE stack walk use
++  // a clobbered header (abend U4083). The restored stack pointer is never
++  // below the current one, so copying from the highest word down is safe even
++  // if the areas overlap.
++  if (Subtarget.isTargetXPLINK64()) {
++    auto &XRegs = Subtarget.getSpecialRegisters<SystemZXPLINK64Registers>();
++    uint64_t Bias = XRegs.getStackPointerBias();
++    SDValue OldSP = DAG.getCopyFromReg(
++        Chain, DL, Regs->getStackPointerRegister(), MVT::i64);
++    Chain = OldSP.getValue(1);
++    for (int I = XRegs.getCallFrameSize() / 8 - 1; I >= 0; --I) {
++      SDValue Offset = DAG.getConstant(Bias + 8 * I, DL, MVT::i64);
++      SDValue Word = DAG.getLoad(
++          MVT::i64, DL, Chain,
++          DAG.getNode(ISD::ADD, DL, MVT::i64, OldSP, Offset),
++          MachinePointerInfo());
++      Chain = DAG.getStore(Word.getValue(1), DL, Word,
++                           DAG.getNode(ISD::ADD, DL, MVT::i64, NewSP, Offset),
++                           MachinePointerInfo());
++    }
++  }
++
+   Chain = DAG.getCopyToReg(Chain, DL, Regs->getStackPointerRegister(), NewSP);
+ 
+   if (StoreBackchain)
+diff --git a/llvm/test/CodeGen/SystemZ/zos-stackrestore.ll b/llvm/test/CodeGen/SystemZ/zos-stackrestore.ll
+new file mode 100644
+index 000000000..6603aa8c1
+--- /dev/null
++++ b/llvm/test/CodeGen/SystemZ/zos-stackrestore.ll
+@@ -0,0 +1,32 @@
++; RUN: llc < %s -mtriple=s390x-ibm-zos | FileCheck %s
++;
++; @@ALCAXP moves the frame header (save area at SP + 2048) down with the stack
++; pointer. A stack restore must copy the current header back to the restored
++; stack pointer before the frame is used again, from the highest word down.
++
++declare void @use(ptr)
++
++; CHECK-LABEL: f DS 0H
++; CHECK:      lgr 11,4
++; CHECK:      basr 7,6
++; CHECK:      la 1,2240(4)
++; CHECK:      basr 7,6
++; CHECK:      lg 0,2168(4)
++; CHECK-NEXT: stg 0,2168(11)
++; CHECK-NEXT: lg 0,2160(4)
++; CHECK-NEXT: stg 0,2160(11)
++; CHECK:      lg 0,2056(4)
++; CHECK-NEXT: stg 0,2056(11)
++; CHECK-NEXT: lg 0,2048(4)
++; CHECK-NEXT: stg 0,2048(11)
++; CHECK-NEXT: lgr 4,11
++; CHECK:      basr 7,6
++; CHECK:      lmg 4,11,2048(4)
++define void @f(i64 %n) {
++  %sp = call ptr @llvm.stacksave.p0()
++  %p = alloca i8, i64 %n, align 8
++  call void @use(ptr %p)
++  call void @llvm.stackrestore.p0(ptr %sp)
++  call void @use(ptr null)
++  ret void
++}
+-- 
+2.43.0
+
