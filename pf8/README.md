@@ -9,6 +9,7 @@ Die portablen Teile sind auf x86_64-linux getestet (`tests/run-x86.sh`, CI-Schri
 | EBCDIC-Codepages (CCSID) | `runtime/zosdsn.c`, `runtime/zosccsid.h`, `rtl/zosccsid.pp`, Unit `zosebcdic` (FPC-Patch 0044), `scripts/gen-ccsid.py` | getestet (`ccsidtest` 17/17, C-Prüfstand 131/131, `tests/test_ccsid.py`) | noch nicht getestet |
 | Gepackte/gezonte Dezimalzahlen | `rtl/zosdecimal.pp`, `rtl/zosdecimalbcd.pp` | getestet (`dectest` 110/110) | noch nicht getestet |
 | Copybook → Pascal | `scripts/copybook2pas.py`, `rtl/zoscobol.pp`, `tests/copybooks/` | getestet (`cobtest` 60/60, `tests/test_copybook2pas.py`) | noch nicht getestet |
+| AMODE 31 ↔ 64 | `rtl/zoscall31.pp`, `runtime/zosc31.c`, `pf8/zpcall31.s` (Brücke), `zpasm1.s`, `zpcob1.cbl`, `zp64call.s`, `zpcob2.cbl`, `call64lib.pas`, `call31test.pas`, `build31*.sh`, `call64.jcl` | Pascal/C-Seite getestet gegen eine Brücken-Attrappe (`call31test` 11/11, `tests/c/fake_zpcall31.c`); `call64lib` über einen Lade-Treiber | **noch nicht getestet** (HLASM, COBOL, CEL4RO64) |
 | Db2 ODBC/CLI | `rtl/zosdb2cli.pp`, `rtl/zosdb2cli_zos.inc`, `pf8/db2probe*.{c,pas}`, `zfpc --db2`, `pf8/db2test.pas`, `*.jcl`, `dsnaoini.txt` | Pascal-Seite getestet gegen unixODBC + SQLite (`db2test` 13/13); Messprogramm gegen unixODBC-Header geprüft | **noch nicht getestet**; Typgrößen nicht gemessen |
 
 ## Ausführen auf z/OS
@@ -259,3 +260,95 @@ Nicht umgesetzt. Weg, sobald die Unit auf z/OS läuft: eine `TSQLConnection`-Abl
 Muster von `TODBCConnection` (`packages/fcl-db/src/sqldb/odbc/odbcconn.pas`), die statt der
 dynamisch geladenen `odbcsql` die Deklarationen von `zosdb2cli` benutzt (dort sind Handles
 Zeiger, bei Db2 z/OS vermutlich Ganzzahlen – deshalb nicht einfach `odbcconn` mit DSNAO64C).
+
+## AMODE 31 ↔ AMODE 64: COBOL, PL/I, Assembler
+
+Pascal-Programme laufen in AMODE 64 (XPLINK-64, LE 64 Bit). Bestehende Programme sind meist
+AMODE 31 (COBOL, PL/I, HLASM mit OS-Linkage). Ein direkter Aufruf über die Grenze geht nicht:
+andere Adresslänge, andere Linkage (OS: R1 → Adressliste mit Hochbit, R13 → 72-Byte-Sicherungs-
+bereich; XPLINK-64: R1–R3, R4-Stack), und eine LE-Umgebung kann nur eine AMODE haben.
+
+### Was z/OS anbietet (Recherche 04.10.2026)
+
+- **LE-Interoperabilität AMODE 31/64**: ab z/OS 3.1 (für ältere Stände per APAR) die
+  Compiler-Writer-Schnittstellen **CEL4RO31** (64 → 31) und **CEL4RO64** (31 → 64). Sie legen in
+  derselben Task eine zweite LE-Umgebung der anderen AMODE an und rufen dort das Ziel auf
+  (laden, Funktion suchen, ausführen, löschen). Erweiterungen: Löschen von DLLs (APAR PH51768),
+  nachladbare Nicht-DLL-Unterprogramme in CEL4RO31 (PH56800). Ein AMODE-31-Ziel von CEL4RO31 muss
+  die 64-Bit-Register selbst sichern.
+- Die IBM-Dokumentation war aus dieser Umgebung nicht abrufbar. Das Layout des
+  **CEL4RO64**-Kontrollblocks steht in Eclipse OpenJ9 (`runtime/j9vm31/j9cel4ro64.h`, EPL/Apache):
+  version, length, flags (X'80000000' DLL laden, X'40000000' Funktion suchen, X'20000000'
+  ausführen), Offsets für Modulname, Funktionsname, Argumente; dllHandle, Funktionsdeskriptor,
+  GPR1–GPR3 nach dem Aufruf, Rückgabecode; Einstieg über CAA+1024 → +8, Verfügbarkeit über
+  CEEPCB_3164 (PCB+84 X'04'). Für **CEL4RO31** fand sich kein frei zugängliches Layout → nicht
+  umgesetzt (Ergänzung, sobald die Beschreibung aus „Language Environment Vendor Interfaces“
+  vorliegt: Kontrollblock nach dem Muster von RO64, Messprogramm wie `db2probe_c.c`).
+
+### Pascal → AMODE 31: eigener Übergang (Unit `zoscall31`)
+
+```pascal
+uses zoscall31, cb_kunde;
+var s: TCall31Session; k: TKUNDE_SATZ; rc: longint;
+begin
+  s := TCall31Session.Create;                     { startet die Brücke }
+  rc := s.Call('ZPCOB1', [Call31Area(k, SizeOf(k))]);
+  s.Free;
+end.
+```
+
+- Die Brücke `zpcall31` (HLASM, AMODE 31, **ohne LE**, nur dokumentierte Dienste) läuft als
+  eigener z/OS-UNIX-Prozess, verbunden über zwei Pipes. Je Aufruf: Bereiche in eigenen Speicher
+  (GETMAIN LOC=31, also unter 2 GB), `LOAD` des Programms (STEPLIB, LNKLST), R1 → Adressliste
+  mit Hochbit am letzten Eintrag, R13 → Sicherungsbereich, `BASSM` (AMODE aus dem LOAD),
+  danach R15 und die Bereiche zurück, `DELETE`, `FREEMAIN`. Eine Sitzung bedient beliebig viele
+  Aufrufe; Fehler beim LOAD (z. B. 806) kommen als `ECall31Error` (Status 1, Code).
+- Datenaustausch über die Copybook-Records aus `copybook2pas.py` (genaue Offsets, EBCDIC,
+  gepackt, binär Big-Endian) – das Programm sieht dieselben Bytes wie unter COBOL.
+- Brücke: `ZOS_CALL31_BRIDGE` (Pfad) oder `zpcall31` neben dem Programm bzw. im
+  Arbeitsverzeichnis. Lade-Bibliothek der Zielprogramme über `STEPLIB` (Start-Skript:
+  `ZOS_RUN_ENV="STEPLIB=HLQ.ZPAS.LOAD31 ZOS_CALL31_BRIDGE=$ZOS_DIR/zpcall31"`).
+
+**Grenzen:**
+- Nur Daten in den übergebenen Bereichen; Zeiger in den Bereichen zeigen in den anderen
+  Prozess (ungültig). Bis 32 Bereiche, je bis 16 MB; jeder Aufruf kopiert zweimal über Pipes
+  (Größenordnung: Prozesswechsel je Aufruf, keine Massenverarbeitung im Mikrosekundenbereich).
+- COBOL/PL/I-Programme laufen unter der Nicht-LE-Brücke als **eigene LE-Enclave je Aufruf**
+  (WORKING-STORAGE bleibt nicht erhalten, Initialisierung kostet). Abhilfe bei Bedarf: Brücke
+  mit CEEPIPI (vorinitialisierte Umgebung) erweitern.
+- Kein AMODE 24 (Bereiche liegen über 16 MB); keine Rückrufe aus dem AMODE-31-Programm nach
+  Pascal; Abends im Zielprogramm beenden die Brücke (die Sitzung meldet dann einen
+  Übertragungsfehler), nicht das Pascal-Programm.
+- Transaktionen (Db2/CICS/IMS) laufen getrennt vom Pascal-Prozess (eigener Prozess, eigene
+  Thread-Identität).
+
+### AMODE 31 → Pascal: CEL4RO64 (`zp64call.s`)
+
+COBOL ruft `CALL 'ZP64CALL' USING DLL-NAME FUNC-NAME ERGEBNIS KUNDE-SATZ`; der LE-konforme
+HLASM-Stub (CEEENTRY, damit CEL4RO64 einen gültigen DSA bekommt) baut den RO64-Kontrollblock
+(laden + suchen + ausführen), übergibt die Datenadressen als 64-Bit-Argumente und gibt GPR3 (das
+`longint`-Ergebnis der Pascal-Funktion) bzw. `-1000-rc` zurück (`-1006`: CEL4RO64 nicht
+vorhanden). Die Pascal-Seite ist eine gewöhnliche DLL (`pf8/call64lib.pas`, `exports`, `cdecl`),
+die den COBOL-Satz über einen Zeiger liest und ändert. **Grenzen:** z/OS 3.1 oder LE-APAR,
+bis 16 Argumente (nur Adressen), Ausnahmen dürfen die Grenze nicht überqueren (die DLL fängt sie
+ab), Namen werden als EBCDIC übergeben (Annahme), auf z/OS noch nicht getestet.
+
+### Bauen und testen auf z/OS (noch nicht durchgeführt)
+
+```sh
+export ZOS_LOAD31=HLQ.ZPAS.LOAD31      # PDSE (RECFM U), vorher anlegen
+sh pf8/build31.sh                      # as/ld/cob2 auf z/OS, dazu call31test und call64lib
+cd pf8
+ZOS_RUN_ENV="STEPLIB=$ZOS_LOAD31 ZOS_CALL31_BRIDGE=<ZOS_DIR>/zpcall31" ./call31test
+```
+
+Erwartet `call31test`: 11 Prüfungen, `Fehler: 0`, rc 0 – ZPASM1(7, 35) = 42, ZPASM1(-50, 8) =
+-42 mit R15 8, ZPCOB1: RETURN-CODE 4, Saldo -20.25 + 100.50 = 80.25, Status A, Punkte 120,
+100 Aufrufe in einer Sitzung, `NIXDA` → LOAD-Fehler (Abend 806) und die Sitzung arbeitet weiter.
+COBOL → Pascal: `pf8/call64.jcl` (Pfad der DLL `libcall64lib.so` und HLQ anpassen) – erwartet
+RC 0 und die Zeilen `OK      Saldo ueber Limit -> gesperrt` und `OK      Saldo unter Limit -> aktiv`.
+Lokal (x86_64): `call31test` gegen `tests/c/fake_zpcall31.c` 11/11 (CI-Schritt `x86`).
+
+Mögliche Stolpersteine: `as` findet die Makros nicht (SYSLIB: `SYS1.MACLIB`, für ZP64CALL
+`CEE.SCEEMAC`), `cob2` findet das Copybook nicht (`-I.`, Datei `kunde.cpy`), das ZFS-Programm
+`zpcall31` braucht das Ausführungsrecht, `LOAD` findet die Programme nur über STEPLIB/LNKLST.

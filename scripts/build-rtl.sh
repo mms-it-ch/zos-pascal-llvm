@@ -56,7 +56,7 @@ rm -f "$U"/*.ppu "$U"/*.o.tmp
 
 # C-Laufzeit des Ports (Unwind-Schnittstelle, atomare Operationen)
 [ "$ZFPC_CI" = 1 ] ||
-for f in zosunwind zosatomic zoscompat zosfpu zossig zosdsn zoslines0 zosdbg; do
+for f in zosunwind zosatomic zoscompat zosfpu zossig zosdsn zoslines0 zosdbg zosc31; do
   "$CLANG" --target=s390x-ibm-zos -O2 -trigraphs -mzos-sys-include="${ZOS_INCLUDE:-$HOME/zos/include}" \
     -D__CHARSET_LIB=1 -D_ALL_SOURCE -D_UNIX03_SOURCE -D_UNIX03_THREADS \
     -c "$REPO/runtime/$f.c" -o "$U/$f.o"
@@ -92,7 +92,7 @@ if [ "$ZFPC_DOTTED" = 1 ]; then
 fi
 # Units des Ports aus diesem Repository (rtl/): CCSID-Tabellen, Dezimalzahlen
 UNITS="$UNITS $REPO/rtl/zosccsid.pp $REPO/rtl/zosdecimal.pp $REPO/rtl/zosdecimalbcd.pp
-       $REPO/rtl/zoscobol.pp $REPO/rtl/zosdb2cli.pp"
+       $REPO/rtl/zoscobol.pp $REPO/rtl/zosdb2cli.pp $REPO/rtl/zoscall31.pp"
 for u in $UNITS; do
   case "$u" in /*) src=$u ;; *) src=$R/$u ;; esac
   $PPC -Sg "$src" || FAILED="$FAILED $(basename "$src")"

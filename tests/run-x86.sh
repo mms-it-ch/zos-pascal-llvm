@@ -21,9 +21,17 @@ $CC -O1 -Wall -Wextra -Wno-unused-parameter -D_GNU_SOURCE -I"$REPO/tests/c/stub"
   "$REPO/tests/c/test_zosdsn.c" "$REPO/runtime/zosdsn.c"
 ( cd "$WORK" && ./test_zosdsn && ZOS_CCSID=IBM-1141 ./test_zosdsn 1141 ) || fail=1
 
+# C-Laufzeit für die Units (zoscall31 bindet zosc31.o und zosdsn.o) und die Attrappe
+# der AMODE-31-Brücke (pf8/call31test)
+$CC -O1 -Wall -D_GNU_SOURCE -I"$REPO/tests/c/stub" -include "$REPO/tests/c/stub/zosstdio.h" \
+  -c "$REPO/runtime/zosdsn.c" -o "$WORK/u/zosdsn.o"
+$CC -O1 -Wall -c "$REPO/runtime/zosc31.c" -o "$WORK/u/zosc31.o"
+$CC -O1 -Wall -o "$WORK/fake_zpcall31" "$REPO/tests/c/fake_zpcall31.c"
+export ZOS_CALL31_BRIDGE=$WORK/fake_zpcall31
+
 echo "-- Pascal-Units und pf8-Tests"
 RO=$FPCSRC/packages/rtl-objpas/src/inc
-PPC="$HOSTFPC -n -Fu$FPCSRC/rtl/units/x86_64-linux -Fu$RO -Fi$RO -Fu$REPO/rtl -Fu$REPO/pf8 -FU$WORK/u -FE$WORK"
+PPC="$HOSTFPC -n -Fu$FPCSRC/rtl/units/x86_64-linux -Fu$RO -Fi$RO -Fu$REPO/rtl -Fu$REPO/pf8 -Fl$WORK/u -FU$WORK/u -FE$WORK"
 # Zeilen "x86 <programm> [argumente]"; "x86odbc ...": nur mit unixODBC + SQLite-Treiber
 sed -n 's/^\(x86\|x86odbc\) //p' "$REPO/ci/x86-tests.txt" > "$WORK/list"
 while read -r t args; do

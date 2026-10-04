@@ -201,6 +201,9 @@ CEE=""; [ -n "\$ZOS_RUN_CEEOPTS" ] && CEE="export _CEE_RUNOPTS='\$ZOS_RUN_CEEOPT
 DLLS=""; [ "\$ZOS_RUN_DLLS" = 1 ] && DLLS="for d in \$ZOS_DIR/lib*.so; do [ -f \\\$d ] && ln -s \\\$d .; done;"
 # Db2 (gebunden mit zfpc --db2): STEPLIB und DSNAOINI aus .zos.env (ZOS_DB2_STEPLIB, ZOS_DB2_INI)
 $DB2LINE
+# ZOS_RUN_ENV: weitere Umgebungsvariablen auf z/OS, z. B.
+# ZOS_RUN_ENV="STEPLIB=HLQ.ZPAS.LOAD31 ZOS_CALL31_BRIDGE=/u/.../zpcall31" (ohne Leerzeichen im Wert)
+ENVX=""; for v in \$ZOS_RUN_ENV; do ENVX="\$ENVX export \$v;"; done
 # ZOS_RUN_FILES: Dateien aus dem Verzeichnis dieses Skripts vorher ins Arbeitsverzeichnis
 # laden (Testsuite: %FILES, die dotest neben das Programm kopiert)
 if [ -n "\$ZOS_RUN_FILES" ]; then
@@ -209,6 +212,6 @@ if [ -n "\$ZOS_RUN_FILES" ]; then
     for f in \$ZOS_RUN_FILES; do [ -f "\$D/\$f" ] && echo "put \$(zos_winpath "\$D/\$f") \$R/\$f"; done
   } | \$ZOS_SFTP -q -i "\$ZOS_KEY" -o BatchMode=yes -b - "\$ZOS_HOST" >/dev/null
 fi
-exec \$ZOS_SSH -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$CEE \$DLLS \$DB2ENV export LIBPATH=\$ZOS_DIR:\$ZOS_DIR/lib:\\\$LIBPATH; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
+exec \$ZOS_SSH -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$CEE \$DLLS \$DB2ENV \$ENVX export LIBPATH=\$ZOS_DIR:\$ZOS_DIR/lib:\\\$LIBPATH; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
 EOF
 chmod +x "$OUT"

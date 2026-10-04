@@ -30,7 +30,11 @@ Erste Version mit Versionsnummer: Release-Stand, CI und Geschäftsdaten-Anbindun
   `EDb2Error`), `zfpc --db2` (Sidedeck DSNAO64C, STEPLIB/DSNAOINI im Start-Skript),
   `ZOS_BATCH_STEPLIB`, Messprogramm `pf8/db2probe_c.c`, `pf8/db2test.pas`, JCL, DSNAOINI-Beispiel;
   Typgrößen auf z/OS noch nicht gemessen.
-- Tests: `pf8/dectest`, `ccsidtest`, `cobtest`, `db2test` (SQLite), `tests/` (Python, C-Prüfstand), CI-Schritt `x86`.
+- AMODE 31 ↔ 64: Unit `zoscall31` mit eigenem Übergang (HLASM-Brücke `pf8/zpcall31.s` als
+  Prozess, `runtime/zosc31.c`), COBOL → Pascal über LE CEL4RO64 (`pf8/zp64call.s`), Test-
+  programme ZPASM1 (HLASM), ZPCOB1/ZPCOB2 (COBOL), `call64lib`; `ZOS_RUN_ENV` im Start-Skript.
+  Auf z/OS noch nicht getestet.
+- Tests: `pf8/dectest`, `ccsidtest`, `cobtest`, `call31test` (Attrappe), `db2test` (SQLite), `tests/` (Python, C-Prüfstand), CI-Schritt `x86`.
 - z/OS-Skripte auch unter Linux ohne WSL (`scripts/zos-hostenv.sh`: ssh/sftp statt
   ssh.exe/sftp.exe).
 
