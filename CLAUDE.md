@@ -208,6 +208,24 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   Läufe mit möglichen Abstürzen nur nach Rücksprache mit dem Nutzer; `pf3/stackcrash` nie
   ohne Grund starten. tb0662 selbst endet inzwischen sauber (EOutOfMemory, RC 217).
 
+- **PF8 Produktion (04.10.2026, Cloud-Sitzung ohne z/OS-Zugang, `pf8/README.md`, `PRODUKTION.md`):**
+  Version 0.9.0 (`VERSION`, `ppcs390x -iZ`, `ZosPortVersion`, Eyecatcher; FPC-Patch 0043), CHANGELOG.md.
+  FPC-Patch 0042: cwstring mit FPC 3.2.2 als Start-Compiler. CI `.github/workflows/ci.yml` =
+  `scripts/ci-build.sh` (Patches 44/44 auf `fpc/BASE`, `make cycle` mit 3.2.2, ppcs390x, RTL +
+  337 Package-Units mit Distributions-llc 18 (`ZFPC_CI=1`: ohne runtime/*.c und zosmap; GOFF
+  nur Gerüst, `library` stürzt in llc 18/20 ab → übersprungen), pf-Programme `-Cn`, Python,
+  x86-Tests); GitHub-Job ~3 min. z/OS-Job für Self-Hosted-Runner (`vars.ZOS_RUNNER`, Secrets),
+  Skripte dafür auch ohne WSL (`scripts/zos-hostenv.sh`). Skripte waren im Repo nicht ausführbar.
+  CCSID (FPC-Patch 0044, `runtime/zosdsn.c`, `ZOS_CCSID`, `,ccsid=NNN`, 21 CECP-Codepages aus ICU,
+  `scripts/gen-ccsid.py`), `rtl/` im Repo für eigene Units (zosccsid, zosdecimal, zosdecimalbcd,
+  zoscobol, zosdb2cli, zoscall31; build-rtl.sh baut sie mit), `scripts/copybook2pas.py`, Db2 CLI
+  (`zfpc --db2`, Typgrößen NICHT gemessen → `pf8/db2probe_c.c`), AMODE 31: eigener Brückenprozess
+  `pf8/zpcall31.s` (CEL4RO31-Layout unbekannt), COBOL→Pascal über CEL4RO64 (Layout aus OpenJ9).
+  Lokal getestet (x86_64, `tests/run-x86.sh`): dectest 110, ccsidtest 17, cobtest 60, call31test 11
+  (Attrappe), db2test 13 (unixODBC+SQLite), zosdsn.c-Prüfstand 131, Python 18. **Auf z/OS ist
+  von PF8 noch nichts gelaufen** – Reihenfolge und Erwartungen in `pf8/README.md`.
+  Namensfalle: C-Datei und Pascal-Unit gleichen Namens überschreiben sich in `units/zos` (`zosc31.c`).
+
 ## Nächste Schritte
 1. PF3: FPC-Testsuite (`~/src/fpc/tests`) auf z/OS. **tbs (27.09.2026): 772/784 ok, Referenz
    x86_64-linux 777/784.** Nur z/OS: 5 × Inline-Assembler (seit Patch 0035 HLASM-Leser, `pf5/README.md`),

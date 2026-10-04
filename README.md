@@ -30,6 +30,7 @@ Pascal ──FPC (Port s390x/zos, nur LLVM-Backend)──▶ LLVM-IR ──llc (
 | PF5 | C-ABI für Records (alle Größen, complex-artig, beide Richtungen) | **erreicht 28.09.2026** (`pf5/abi.pas` 27/27, Testsuite `test/cg/tcalext*`, `tcalpvr*` 12/12); Backtraces mit Funktionsnamen und mit `-gl` Zeilennummern (`pf5/bt.pas`); Inline-Assembler in HLASM-Syntax (`pf5/asmtest.pas` 6/6) |
 | PF6 | MVS-Datasets und DD-Anweisungen in der normalen Pascal-Datei-E/A (Text mit EBCDIC-Umwandlung, binär), Batch mit SYSIN/SYSPRINT | **erreicht 28.09.2026** (`pf6/`) |
 | PF7 | FPC-Packages: fcl-base, fcl-json, fcl-xml, fcl-process, fcl-net/Sockets, rtl-generics, hash, paszlib u. a., fcl-web, fcl-db, System V IPC (332 Units) | **erreicht 28.09.2026** (`pf7/pkgtest.pas` 18/18, `webtest` 3/3, `ipctest` 22/22) |
+| PF8 | Produktion: Version 0.9.0, CI, freigegebene Schalter (`PRODUKTION.md`); EBCDIC-CCSIDs, gepackte/gezonte Dezimalzahlen, Copybook → Pascal, Db2 ODBC/CLI, AMODE 31 ↔ 64 (COBOL/HLASM) | umgesetzt 04.10.2026, lokal getestet (x86_64, CI); **auf z/OS noch nicht getestet** (`pf8/README.md`) |
 
 ## Benutzung (WSL)
 
@@ -38,6 +39,10 @@ sh scripts/build-rtl.sh            # Compiler + RTL + Packages nach ~/opt/zfpc
 sh scripts/zfpc prog.pas           # übersetzen, auf z/OS binden
 ./prog                             # startet das Programm auf z/OS (über SSH)
 ```
+
+`zfpc --version` zeigt die Port-Version (`VERSION`, Ablauf und Schalter für die Produktion:
+[PRODUKTION.md](PRODUKTION.md), Änderungen: [CHANGELOG.md](CHANGELOG.md)); `zfpc --db2` bindet
+gegen Db2 ODBC (`pf8/README.md`).
 
 `zfpc` ruft `ppcs390x`; FPC ruft `clang` (= `scripts/zos-irc`, LLVM-IR → GOFF mit `llc`) und als
 Linker `scripts/zos-ld` (lädt die Objekte hoch, bindet mit `ld` auf z/OS, hinterlässt ein
@@ -81,6 +86,11 @@ FireDAC, Windows-, Apache- und Microhttpd-Anbindungen.
 | `pf1/probe/zosprobe.c` | misst Typen, Layouts, Konstanten auf z/OS (Pascal-Ausgabe) |
 | `scripts/goffdump.py [-v]` | GOFF-Objekte prüfen |
 | `scripts/llvm-quick-rebuild.sh` | einzelne LLVM-Quellen schnell neu übersetzen |
+| `scripts/ci-build.sh` | lokaler Teil der CI (Patches, Compiler, RTL/Packages, pf-Programme, Python, x86-Tests) |
+| `scripts/ci-zos.sh` | z/OS-Teil der CI (Self-Hosted-Runner) |
+| `scripts/gen-ccsid.py` | EBCDIC-Tabellen (CCSIDs) aus den ICU-Zuordnungen |
+| `scripts/copybook2pas.py` | COBOL-Copybook → Pascal-Unit (Satzbild, Feldzugriffe) |
+| `scripts/zos-hostenv.sh` | WSL oder Linux für die z/OS-Skripte (ssh.exe bzw. ssh) |
 
 ## Lizenz
 

@@ -12,6 +12,20 @@ Die portablen Teile sind auf x86_64-linux getestet (`tests/run-x86.sh`, CI-Schri
 | AMODE 31 ↔ 64 | `rtl/zoscall31.pp`, `runtime/zosc31.c`, `pf8/zpcall31.s` (Brücke), `zpasm1.s`, `zpcob1.cbl`, `zp64call.s`, `zpcob2.cbl`, `call64lib.pas`, `call31test.pas`, `build31*.sh`, `call64.jcl` | Pascal/C-Seite getestet gegen eine Brücken-Attrappe (`call31test` 11/11, `tests/c/fake_zpcall31.c`); `call64lib` über einen Lade-Treiber | **noch nicht getestet** (HLASM, COBOL, CEL4RO64) |
 | Db2 ODBC/CLI | `rtl/zosdb2cli.pp`, `rtl/zosdb2cli_zos.inc`, `pf8/db2probe*.{c,pas}`, `zfpc --db2`, `pf8/db2test.pas`, `*.jcl`, `dsnaoini.txt` | Pascal-Seite getestet gegen unixODBC + SQLite (`db2test` 13/13); Messprogramm gegen unixODBC-Header geprüft | **noch nicht getestet**; Typgrößen nicht gemessen |
 
+## Prüfliste für z/OS (in dieser Reihenfolge, alles noch offen)
+
+1. `sh scripts/build-rtl.sh` mit dem eigenen LLVM (neue Units und `runtime/zosc31.c`),
+   `zos-install-rtl.sh`; `zfpc --version` → 0.9.0; `grep -a ZPAS <programm>` auf z/OS zeigt den
+   Eyecatcher.
+2. Bisherige Tests unverändert grün (`ci/zos-tests.txt`, `scripts/ci-zos.sh`) – besonders PF6
+   (`pf6/dsntest`), weil `zosdsn.c` die CCSID-Umstellung bekommen hat.
+3. `dectest` 110/0 und `cobtest` 60/0 (reines Pascal: Big-Endian-Gegenprobe).
+4. `ccsidtest` 30/0 (Datasets), auch mit `ZOS_CCSID=273`.
+5. Db2: Header holen, `db2probe` → `rtl/zosdb2cli_zos.inc` ersetzen, RTL neu bauen, `db2test`
+   13/0 (Abschnitt Db2).
+6. AMODE 31: `pf8/build31.sh`, `call31test` 11/0, Batch `call64.jcl` RC 0 (z/OS 3.1/APAR).
+7. CI-Runner einrichten (`PRODUKTION.md`, Abschnitt CI) und `ZOS_RUNNER=true` setzen.
+
 ## Ausführen auf z/OS
 
 Voraussetzung wie immer: `sh scripts/build-rtl.sh` (baut jetzt auch `zosccsid`, `zosdecimal`,
