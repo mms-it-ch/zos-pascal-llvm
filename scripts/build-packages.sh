@@ -108,6 +108,8 @@ for p in $LOOP; do
 done
 echo "Units übersetzt: $ok"
 echo "gescheitert:$failed" | fold -w 100
+# ZFPC_PKG_FAILED=datei: Liste der gescheiterten Units (eine je Zeile, CI-Vergleich)
+[ -z "$ZFPC_PKG_FAILED" ] || printf '%s\n' $failed | sort > "$ZFPC_PKG_FAILED"
 
 T=$(mktemp -d)
 {

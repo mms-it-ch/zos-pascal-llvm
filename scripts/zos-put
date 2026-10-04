@@ -2,21 +2,22 @@
 # zos-put: eine lokale Datei (WSL-Pfad) unverändert (binär) nach z/OS kopieren.
 #   zos-put <datei> <ziel auf z/OS>
 # Läuft in WSL; sftp.exe von Git für Windows liest die Datei über ihren Windows-Pfad,
-# deshalb geht sie über das Windows-Temp. Zugangsdaten aus .zos.env.
+# deshalb geht sie über das Windows-Temp (unter Linux direkt, zos-hostenv.sh).
+# Zugangsdaten aus .zos.env.
 SELF=$(readlink -f "$0")
-G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
+. "$(dirname "$SELF")/zos-hostenv.sh"
 ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
-WH=$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
+WH=$(zos_winhome)
 HOME=$WH . "$ENVFILE"
 [ $# -eq 2 ] || { echo "usage: zos-put <datei> <ziel>" >&2; exit 2; }
 SRCF=$1
-case "$SRCF" in
-  /mnt/*) ;;
+case "$ZOS_HOSTENV:$SRCF" in
+  linux:*|wsl:/mnt/*) ;;
   *)
-    WTMP=$(wslpath -u "$(cmd.exe /c 'echo %TEMP%' 2>/dev/null | tr -d '\r')")
+    WTMP=$(zos_wintemp)
     T=$WTMP/zos-put.$$
     cp "$SRCF" "$T" || exit 1
     trap 'rm -f "$T"' EXIT
     SRCF=$T ;;
 esac
-echo "put $(wslpath -m "$SRCF") $2" | sftp.exe -q -i "$ZOS_KEY" -o BatchMode=yes -b - "$ZOS_HOST" >/dev/null
+echo "put $(zos_winpath "$SRCF") $2" | $ZOS_SFTP -q -i "$ZOS_KEY" -o BatchMode=yes -b - "$ZOS_HOST" >/dev/null

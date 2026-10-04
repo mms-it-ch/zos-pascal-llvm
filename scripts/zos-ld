@@ -15,10 +15,8 @@
 #
 # Zugangsdaten: .zos.env im Repo (ZOS_HOST, ZOS_KEY, ZOS_DIR, ZOS_LEHLQ) oder $ZOS_ENV.
 # Läuft in WSL; benutzt ssh.exe/sftp.exe (Git für Windows), weil der Schlüssel dort liegt.
+# Unter Linux ohne WSL (Self-Hosted-Runner der CI) ssh/sftp, siehe zos-hostenv.sh.
 set -e
-# ssh.exe/sftp.exe von Git für Windows (msys-Pfade aus .zos.env), auch wenn der Aufrufer
-# (z. B. VS Code) das Windows-OpenSSH zuerst im PATH hat
-G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
 KIND=$1; OUT=$2; LIST=$3
 [ -n "$LIST" ] || { echo "usage: zos-ld exe|dll <output> <linklist> [ld-options]" >&2; exit 2; }
 shift 3
@@ -26,22 +24,19 @@ shift 3
 LDOPTS="$*"
 
 SELF=$(readlink -f "$0")
+. "$(dirname "$SELF")/zos-hostenv.sh"
 # HOME in WSL (das Einlesen von .zos.env setzt HOME auf das Windows-Profil)
 UHOME=$HOME
 ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
 # .zos.env ist für Git Bash geschrieben ($HOME = Windows-Profil); ssh.exe
 # erwartet msys-Pfade -> HOME beim Einlesen auf das Windows-Profil setzen
-winhome() {
-  h=$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')
-  wslpath -u "$h" | sed 's|^/mnt/\([a-z]\)/|/\1/|'
-}
-[ -f "$ENVFILE" ] && { WH=$(winhome); HOME=$WH . "$ENVFILE"; }
+[ -f "$ENVFILE" ] && { WH=$(zos_winhome); HOME=$WH . "$ENVFILE"; }
 HOST=${ZOS_HOST:-zuser@zos.example.com}
 KEY=${ZOS_KEY:-$HOME/.ssh/zos_rsa}
 DIR=${ZOS_DIR:-/u/zuser/ZPAS}
 LE=${ZOS_LEHLQ:-CEE}
-SSH=${ZOS_SSH:-ssh.exe}
-SFTP=${ZOS_SFTP:-sftp.exe}
+SSH=$ZOS_SSH
+SFTP=$ZOS_SFTP
 SSHOPT="-i $KEY -o BatchMode=yes"
 
 NAME=$(basename "$OUT")
@@ -54,7 +49,7 @@ else
   ENTRY="-e CELQSTRT"
 fi
 # Arbeitsverzeichnis im Windows-Temp, weil sftp.exe die Datei lesen muss
-WTMP=$(wslpath -u "$(cmd.exe /c 'echo %TEMP%' 2>/dev/null | tr -d '\r')")
+WTMP=$(zos_wintemp)
 TMP=$(mktemp -d "$WTMP/zos-ld.XXXXXX")
 trap 'rm -rf "$TMP" "$TMP.tar" "$TMP.dbg"' EXIT
 mkdir -p "$TMP.dbg"
@@ -112,7 +107,7 @@ rm -f "$TMP/zzz_lines.c" "$TMP/lines.log"
 
 # Übertragen (tar-Datei binär per sftp) und binden
 ( cd "$TMP" && tar --format=ustar -cf "$TMP.tar" . )
-printf -- '-mkdir %s/bind\nmkdir %s\nput %s %s/objs.tar\n' "$DIR" "$BDIR" "$(wslpath -m "$TMP.tar")" "$BDIR" |
+printf -- '-mkdir %s/bind\nmkdir %s\nput %s %s/objs.tar\n' "$DIR" "$BDIR" "$(zos_winpath "$TMP.tar")" "$BDIR" |
   $SFTP -q $SSHOPT -b - "$HOST" 2>&1 >/dev/null | grep -v "mkdir.*Failure" >&2 || true
 # Binden; Schutz: nicht binden, wenn im Dateisystem weniger als ZOS_MIN_FREE_KB
 # (Standard 60 MB) frei sind. Die Binderliste bleibt nur im Fehlerfall erhalten
@@ -175,12 +170,14 @@ fi
 
 # Lokales Start-Skript
 # (keine Zugangsdaten im Skript: sie werden beim Start aus .zos.env gelesen)
+VERSION=$(cat "$(dirname "$SELF")/../VERSION" 2>/dev/null || echo unbekannt)
 cat > "$OUT" <<EOF
 #!/bin/sh
 # Startet $NAME auf z/OS (Arbeitsverzeichnis ZOS_DIR/run/$NAME), erzeugt von zos-ld
-G="\${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "\$G/ssh.exe" ] && PATH="\$G:\$PATH"
+# zos-pascal-llvm $VERSION, gebunden $(date '+%Y-%m-%d %H:%M')
+. "$(dirname "$SELF")/zos-hostenv.sh"
 ZOS_ENV=\${ZOS_ENV:-$ENVFILE}
-WH=\$(wslpath -u "\$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
+WH=\$(zos_winhome)
 HOME=\$WH . "\$ZOS_ENV"
 args=""; for a in "\$@"; do args="\$args '\$a'"; done
 R=\$ZOS_DIR/run/$NAME.\$\$
@@ -198,9 +195,9 @@ DLLS=""; [ "\$ZOS_RUN_DLLS" = 1 ] && DLLS="for d in \$ZOS_DIR/lib*.so; do [ -f \
 if [ -n "\$ZOS_RUN_FILES" ]; then
   D=\$(cd "\$(dirname "\$0")" && pwd)
   { echo "-mkdir \$ZOS_DIR/run"; echo "mkdir \$R"
-    for f in \$ZOS_RUN_FILES; do [ -f "\$D/\$f" ] && echo "put \$(wslpath -m "\$D/\$f") \$R/\$f"; done
-  } | ${SFTP} -q -i "\$ZOS_KEY" -o BatchMode=yes -b - "\$ZOS_HOST" >/dev/null
+    for f in \$ZOS_RUN_FILES; do [ -f "\$D/\$f" ] && echo "put \$(zos_winpath "\$D/\$f") \$R/\$f"; done
+  } | \$ZOS_SFTP -q -i "\$ZOS_KEY" -o BatchMode=yes -b - "\$ZOS_HOST" >/dev/null
 fi
-exec ${SSH} -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$CEE \$DLLS export LIBPATH=\$ZOS_DIR:\$ZOS_DIR/lib:\\\$LIBPATH; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
+exec \$ZOS_SSH -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$CEE \$DLLS export LIBPATH=\$ZOS_DIR:\$ZOS_DIR/lib:\\\$LIBPATH; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
 EOF
 chmod +x "$OUT"

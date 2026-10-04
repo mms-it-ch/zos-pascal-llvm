@@ -1,0 +1,155 @@
+# CI für zos-pascal-llvm.
+#
+# Job "build" (GitHub-Runner, Ubuntu): FPC main klonen, Patchserie anwenden, ppcs390x bauen,
+# RTL und Packages für z/OS bis zum Objekt übersetzen (Distributions-llc), pf-Testprogramme
+# übersetzen, Python-Skripte und portable Units testen. Alles in scripts/ci-build.sh, das
+# auch von Hand läuft.
+#
+# Job "zos" (Self-Hosted-Runner mit den Labels self-hosted, zos): echtes GOFF mit dem
+# eigenen LLVM-Zweig, Binden und Ausführen auf z/OS, auf Wunsch Testsuite-Vergleich. Läuft
+# nur, wenn die Repository-Variable ZOS_RUNNER auf "true" steht (GitHub kann nicht prüfen,
+# ob ein Runner da ist; ohne Runner bliebe der Job sonst bis zu 24 h in der Warteschlange).
+# Zugangsdaten nur über Secrets (ZOS_HOST, ZOS_SSH_KEY, ZOS_DIR, ZOS_LEHLQ, ZOS_PASLIB),
+# Einrichtung: PRODUKTION.md, Abschnitt "CI".
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**', 'release/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      testsuite:
+        description: 'z/OS: FPC-Testsuite-Verzeichnisse (z. B. "tbs tbf"), leer = keine'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      FPCSRC: ${{ github.workspace }}/.ci/fpc
+      PREFIX: ${{ github.workspace }}/.ci/zfpc
+      HOSTDIR: ${{ github.workspace }}/.ci/fpc-main
+      CI_WORK: ${{ github.workspace }}/.ci/work
+      ZOS_LLVM_BIN: /usr/lib/llvm-18/bin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pakete (FPC 3.2.2 als Start-Compiler, LLVM 18)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            fp-compiler-3.2.2 fp-units-rtl-3.2.2 llvm-18
+          /usr/lib/llvm-18/bin/llc --version | head -3
+
+      # Der blobfreie Klon von FPC main (Basis-Commit in fpc/BASE) wird zwischengespeichert;
+      # Patches und Bau laufen immer neu (sie sind das, was geprüft wird).
+      - name: Cache FPC-Klon
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ci/fpc
+          key: fpc-git-${{ hashFiles('fpc/BASE') }}
+
+      - name: Patchserie anwenden
+        run: sh scripts/ci-build.sh source
+      - name: Compiler (nativ + ppcs390x)
+        run: sh scripts/ci-build.sh compiler
+      - name: RTL und Packages für z/OS
+        run: sh scripts/ci-build.sh rtl
+      - name: Testprogramme übersetzen
+        run: sh scripts/ci-build.sh pf
+      - name: Python-Skripte
+        run: sh scripts/ci-build.sh python
+      - name: Portable Units (x86_64)
+        run: sh scripts/ci-build.sh x86
+
+      - name: Protokolle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs
+          path: ${{ github.workspace }}/.ci/work/**/*.log
+          if-no-files-found: ignore
+
+  zos:
+    needs: build
+    if: vars.ZOS_RUNNER == 'true' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, zos]
+    timeout-minutes: 240
+    env:
+      FPCSRC: ${{ github.workspace }}/.ci/fpc
+      PREFIX: ${{ github.workspace }}/.ci/zfpc
+      HOSTDIR: ${{ github.workspace }}/.ci/fpc-main
+      CI_WORK: ${{ github.workspace }}/.ci/work
+      # auf dem Runner vorhanden (PRODUKTION.md): eigener LLVM-Zweig, clang für runtime/*.c,
+      # z/OS-Header (lizenziert, nicht im Repo)
+      ZOS_LLVM_BIN: ${{ vars.ZOS_LLVM_BIN }}
+      ZOS_CLANG: ${{ vars.ZOS_CLANG }}
+      ZOS_INCLUDE: ${{ vars.ZOS_INCLUDE }}
+      ZOS_LLVM_FORK: '1'
+      ZOS_HOSTENV: linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zugangsdaten aus Secrets
+        env:
+          ZOS_HOST_S: ${{ secrets.ZOS_HOST }}
+          ZOS_SSH_KEY_S: ${{ secrets.ZOS_SSH_KEY }}
+          ZOS_DIR_S: ${{ secrets.ZOS_DIR }}
+          ZOS_LEHLQ_S: ${{ secrets.ZOS_LEHLQ }}
+          ZOS_PASLIB_S: ${{ secrets.ZOS_PASLIB }}
+        run: |
+          umask 077
+          d="$RUNNER_TEMP/zos"; mkdir -p "$d"
+          printf '%s\n' "$ZOS_SSH_KEY_S" > "$d/key"
+          {
+            echo "ZOS_HOST='$ZOS_HOST_S'"
+            echo "ZOS_KEY='$d/key'"
+            echo "ZOS_DIR='$ZOS_DIR_S'"
+            echo "ZOS_LEHLQ='${ZOS_LEHLQ_S:-CEE}'"
+            echo "ZOS_PASLIB='$ZOS_PASLIB_S'"
+          } > "$d/zos.env"
+          echo "ZOS_ENV=$d/zos.env" >> "$GITHUB_ENV"
+
+      - name: Bau mit eigenem LLVM (echtes GOFF)
+        run: |
+          sh scripts/ci-build.sh source compiler
+          HOSTFPC="$HOSTDIR/bin/ppcx64" LOG="$CI_WORK/packages.log" \
+            sh scripts/build-rtl.sh --no-compiler > "$CI_WORK/rtl.log" 2>&1 || { tail -40 "$CI_WORK/rtl.log"; exit 1; }
+          tail -3 "$CI_WORK/rtl.log"
+
+      - name: RTL auf z/OS installieren
+        run: sh scripts/zos-install-rtl.sh
+
+      - name: Testprogramme auf z/OS
+        run: sh scripts/ci-zos.sh
+
+      - name: FPC-Testsuite (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' && inputs.testsuite != ''
+        run: |
+          FPCTESTS="$FPCSRC/tests" sh scripts/fpc-testsuite.sh -j 4 ${{ inputs.testsuite }}
+          FPCTESTS="$FPCSRC/tests" python3 scripts/fpc-testsuite-compare.py ${{ inputs.testsuite }} | tee "$CI_WORK/testsuite.txt"
+
+      - name: Aufräumen
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/zos"
+
+      - name: Ergebnisse
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zos-results
+          path: |
+            ${{ github.workspace }}/.ci/work/*.txt
+            ${{ github.workspace }}/.ci/work/zos/*.out
+          if-no-files-found: ignore

@@ -1,12 +1,11 @@
 #!/bin/sh
 # zos-sh: führt einen Befehl in der z/OS-UNIX-Shell aus (im Verzeichnis ZOS_DIR).
 #   zos-sh 'befehl ...'
-# Läuft in WSL (ssh.exe von Git für Windows); Zugangsdaten aus .zos.env.
+# Läuft in WSL (ssh.exe von Git für Windows) oder unter Linux (zos-hostenv.sh);
+# Zugangsdaten aus .zos.env.
 SELF=$(readlink -f "$0")
-# ssh.exe/sftp.exe von Git für Windows (msys-Pfade aus .zos.env), auch wenn der Aufrufer
-# (z. B. VS Code) das Windows-OpenSSH zuerst im PATH hat
-G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
+. "$(dirname "$SELF")/zos-hostenv.sh"
 ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
-WH=$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
+WH=$(zos_winhome)
 HOME=$WH . "$ENVFILE"
-exec ${ZOS_SSH:-ssh.exe} -i "$ZOS_KEY" -o BatchMode=yes "$ZOS_HOST" "cd $ZOS_DIR && $*"
+exec $ZOS_SSH -i "$ZOS_KEY" -o BatchMode=yes "$ZOS_HOST" "cd $ZOS_DIR && $*"

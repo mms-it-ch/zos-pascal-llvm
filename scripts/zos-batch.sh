@@ -22,9 +22,6 @@
 # (User-ID) ersetzt, damit sie nicht in der Datei steht. Definiert die Datei STDOUT oder
 # SYSPRINT (bzw. STDERR oder SYSOUT), entfallen beide PATH-DDs dieses Paars.
 set -e
-# ssh.exe/sftp.exe von Git für Windows (msys-Pfade aus .zos.env), auch wenn der Aufrufer
-# (z. B. VS Code) das Windows-OpenSSH zuerst im PATH hat
-G="${ZOS_GIT_BIN:-/mnt/c/Program Files/Git/usr/bin}"; [ -x "$G/ssh.exe" ] && PATH="$G:$PATH"
 ONLYJCL=0; JES=0
 [ "$1" = -n ] && { ONLYJCL=1; shift; }
 [ "$1" = -j ] && { ONLYJCL=1; JES=1; shift; }
@@ -37,15 +34,16 @@ esac
 [ ${#MEMBER} -le 8 ] || { echo "zos-batch: Membername länger als 8 Zeichen" >&2; exit 2; }
 
 SELF=$(readlink -f "$0")
+. "$(dirname "$SELF")/zos-hostenv.sh"
 ENVFILE=${ZOS_ENV:-$(dirname "$SELF")/../.zos.env}
-WH=$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')" | sed 's|^/mnt/\([a-z]\)/|/\1/|')
+WH=$(zos_winhome)
 [ -f "$ENVFILE" ] && HOME=$WH . "$ENVFILE"
 HOST=${ZOS_HOST:-zuser@zos.example.com}
 KEY=${ZOS_KEY:-$HOME/.ssh/zos_rsa}
 DIR=${ZOS_DIR:-/u/zuser/ZPAS}
 PASLIB=${ZOS_PASLIB:-ZUSER.ZPAS.LOAD}
-SSH=${ZOS_SSH:-ssh.exe}
-SFTP=${ZOS_SFTP:-sftp.exe}
+SSH=$ZOS_SSH
+SFTP=$ZOS_SFTP
 SSHOPT="-i $KEY -o BatchMode=yes"
 # Jobname: User-ID (bis 7 Zeichen) + 'P'
 USERID=$(echo "${HOST%%@*}" | tr a-z A-Z | cut -c1-7)
@@ -120,11 +118,11 @@ if [ $ONLYJCL = 1 ]; then
 fi
 
 # JCL übertragen (ASCII), auf z/OS nach EBCDIC wandeln und einreichen
-WTMP=$(wslpath -u "$(cmd.exe /c 'echo %TEMP%' 2>/dev/null | tr -d '\r')")
+WTMP=$(zos_wintemp)
 TMP=$(mktemp "$WTMP/zos-batch.XXXXXX")
 trap 'rm -f "$TMP"' EXIT
 jcl > "$TMP"
-printf -- '-mkdir %s\nput %s %s/%s.jcl.a\n' "$B" "$(wslpath -m "$TMP")" "$B" "$TAG" |
+printf -- '-mkdir %s\nput %s %s/%s.jcl.a\n' "$B" "$(zos_winpath "$TMP")" "$B" "$TAG" |
   $SFTP -q $SSHOPT -b - "$HOST" 2>&1 >/dev/null | grep -v "mkdir.*Failure" >&2 || true
 $SSH $SSHOPT "$HOST" sh -s <<EOS
 cd $B || exit 1

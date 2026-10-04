@@ -1,0 +1,42 @@
+# Änderungen
+
+Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionen nach
+[Semantic Versioning](https://semver.org/lang/de/) (Port-Version, `VERSION`; Ablauf
+`PRODUKTION.md`). Vor 0.9.0 gab es keine Versionsnummern, die Meilensteine stehen unten.
+
+## [Unveröffentlicht]
+
+## [0.9.0] – noch ohne Tag
+
+Erste Version mit Versionsnummer: Release-Stand, CI und Geschäftsdaten-Anbindung (PF8).
+
+### Neu
+- Versionierung: `VERSION`, `zfpc --version`, `ppcs390x -iZ`, Logo, `ZosPortVersion` in der
+  RTL, Eyecatcher `ZPAS <version> FPC 3.3.1` (ASCII/EBCDIC) in jedem Programm, Kopfzeile im
+  Start-Skript (FPC-Patch 0043).
+- CI (`.github/workflows/ci.yml`, `scripts/ci-build.sh`): Patchserie anwenden, Compiler,
+  RTL/Packages und Testprogramme übersetzen, Python-Skripte, portable Units auf x86_64;
+  vorbereiteter z/OS-Job für einen Self-Hosted-Runner (`scripts/ci-zos.sh`).
+- `PRODUKTION.md`: freigegebene Compilerschalter, Versionen, Release-Ablauf, CI-Einrichtung.
+- z/OS-Skripte auch unter Linux ohne WSL (`scripts/zos-hostenv.sh`: ssh/sftp statt
+  ssh.exe/sftp.exe).
+
+### Korrigiert
+- FPC-Patch 0042: `rtl/unix/cwstring.pp` ließ sich mit dem Start-Compiler FPC 3.2.2 nicht
+  übersetzen (`{$elseif}` nach `{$ifdef}`).
+- Skripte im Repo ausführbar (Dateimodus).
+
+## Meilensteine vor 0.9.0
+
+| Datum | Meilenstein |
+|---|---|
+| 27.09.2026 | PF0: Machbarkeit FPC → LLVM-IR → GOFF → z/OS |
+| 27.09.2026 | PF1: echte `system`-Unit (17/17) |
+| 27.09.2026 | PF2: Exceptions mit eigenem XPLINK-Unwinder, Basis-RTL |
+| 27.09.2026 | PF4: Interop Pascal ↔ C, DLL, Batch/JCL, PDSE |
+| 27.–28.09.2026 | PF3: FPC-Testsuite auf z/OS (tbs 772, tbf 317, webtbf 549, test 2025, webtbs 2696) |
+| 28.09.2026 | PF5: C-ABI für Records, Backtraces mit Zeilennummern, HLASM-Inline-Assembler |
+| 28.09.2026 | PF6: MVS-Datasets und DD-Anweisungen in der Pascal-Datei-E/A, VSAM (`zosrecio`) |
+| 28.09.2026 | PF7: FPC-Packages (332 Units) |
+| 29.09.2026 | Testsuite aus freien Quellen (`suite/`), Units mit Namensraum, z/OS-Debugger |
+| 02.10.2026 | LLVM-Patch 0011 (Rahmenkopf bei stackrestore) |

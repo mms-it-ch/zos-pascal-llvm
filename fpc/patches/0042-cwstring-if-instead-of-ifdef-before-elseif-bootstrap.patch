@@ -1,0 +1,31 @@
+From b8c7c395e1e101a1d10dcfa7cb144996294a2634 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 4 Oct 2026 19:27:41 +0000
+Subject: [PATCH 42/43] cwstring: $if instead of $ifdef before $elseif
+ (bootstrap with FPC 3.2.2)
+
+FPC 3.2.2, the starting compiler for main, rejects {$elseif} after
+{$ifdef} ("ENDIF without IF(N)DEF"), so the RTL of the z/OS branch could
+not be built for the host with the release compiler.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/unix/cwstring.pp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/rtl/unix/cwstring.pp b/rtl/unix/cwstring.pp
+index f47e04bf0f..29979c5e78 100644
+--- a/rtl/unix/cwstring.pp
++++ b/rtl/unix/cwstring.pp
+@@ -192,7 +192,7 @@ function mblen(const s: PAnsiChar; n: size_t): size_t; cdecl; external clib name
+   unicode_encoding2 = 'UTF-16LE';
+   unicode_encoding4 = 'UCS-4LE';
+ {$else  FPC_LITTLE_ENDIAN}
+-{$ifdef AIX}
++{$if defined(AIX)}
+   unicode_encoding2 = 'UTF-16';
+ {$elseif defined(zos)}
+   { z/OS iconv knows these as CCSIDs only: 1200 = UTF-16 big endian,
+-- 
+2.43.0
+

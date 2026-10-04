@@ -1,0 +1,36 @@
+# Package-Units, die sich für z/OS nicht übersetzen lassen (Windows, Apache, fehlende
+# Abhängigkeiten; pf7/README.md). Vergleich in scripts/ci-build.sh (Schritt rtl).
+fcl-db/src/dbase/dbf_reg.pas
+fcl-db/src/dbase/dbf_str_es.pas
+fcl-db/src/dbase/dbf_str_fr.pas
+fcl-db/src/dbase/dbf_str_ita.pas
+fcl-db/src/dbase/dbf_str_nl.pas
+fcl-db/src/dbase/dbf_str_pl.pas
+fcl-db/src/dbase/dbf_str_pt.pas
+fcl-db/src/dbase/tdbf_l.pas
+fcl-db/src/sqldb/sqldbpool.pp
+fcl-fpcunit/digesttestreport.pp
+fcl-net/httpsvlt.pp
+fcl-process/fpsimpleservice.pp
+fcl-process/processunicode.pp
+fcl-res/rcparser.pas
+fcl-res/rcreader.pp
+fcl-web/src/base/custapache.pp
+fcl-web/src/base/custapache24.pp
+fcl-web/src/base/custhttpsys.pp
+fcl-web/src/base/custmicrohttpapp.pp
+fcl-web/src/base/fpapache.pp
+fcl-web/src/base/fpapache24.pp
+fcl-web/src/base/fphttpsys.pp
+fcl-web/src/base/microhttpapp.pp
+fcl-web/src/restbridge/sqldbrestado.pp
+fcl-web/src/restbridge/sqldbrestbridge.pp
+fcl-web/src/restbridge/sqldbrestcds.pp
+fcl-web/src/restbridge/sqldbrestini.pp
+fcl-web/src/restbridge/sqldbrestmodule.pp
+fcl-web/src/restbridge/sqldbrestopenapi.pas
+fcl-web/src/restbridge/sqldbrestxml.pp
+fcl-xml/xmliconv.pas
+fcl-xml/xmliconv_windows.pas
+rtl-extra/gpm.pp
+rtl-extra/serial.pp

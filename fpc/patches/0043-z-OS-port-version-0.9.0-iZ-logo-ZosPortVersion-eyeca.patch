@@ -1,0 +1,84 @@
+From be56a73fac0f11cc79aa24daad9aae2dcac17dad Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 4 Oct 2026 19:28:20 +0000
+Subject: [PATCH 43/43] z/OS: port version 0.9.0 (-iZ, logo, ZosPortVersion,
+ eyecatchers)
+
+The compiler shows the version of the z/OS port (zos-pascal-llvm) in the
+logo for -Tzos and with -iZ; -iV/-iW stay the FPC version (3.3.1) for
+fpcmake and the tools. The system unit has the same value as the constant
+ZosPortVersion and puts eyecatchers into every program: FPC_ZOS_VERSION
+(ASCII) and FPC_ZOS_VERSION_E (EBCDIC, for ISPF browse/AMBLIST).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ compiler/options.pas |  4 ++++
+ compiler/version.pas |  4 ++++
+ rtl/zos/system.pp    | 12 ++++++++++++
+ 3 files changed, 20 insertions(+)
+
+diff --git a/compiler/options.pas b/compiler/options.pas
+index 5b26f8dcd2..9191036dd9 100644
+--- a/compiler/options.pas
++++ b/compiler/options.pas
+@@ -280,6 +280,8 @@ procedure TOption.WriteLogo;
+       p:=pchar(msg);
+       while assigned(p) do
+         Comment(V_Normal,GetMsgLine(p));
++      if target_info.system=system_s390x_zos then
++        Comment(V_Normal,'z/OS port (zos-pascal-llvm) version '+zosport_version);
+       LogoWritten:= true;
+     end;
+ end;
+@@ -2075,6 +2077,8 @@ procedure TOption.WriteQuickInfo;
+         AddInfo(version_string);
+       'W' :
+         AddInfo(full_version_string);
++      'Z' :
++        AddInfo(zosport_version);
+       'D' :
+         AddInfo(date_string);
+       '_' :
+diff --git a/compiler/version.pas b/compiler/version.pas
+index 5831815923..d51919c35a 100644
+--- a/compiler/version.pas
++++ b/compiler/version.pas
+@@ -32,6 +32,10 @@ interface
+        patch_nr   = '1';
+        minorpatch = '';
+ 
++       { version of the z/OS port (zos-pascal-llvm), shown in the logo for
++         -Tzos and by -iZ; the RTL has the same value as ZosPortVersion }
++       zosport_version = '0.9.0';
++
+        { word version for ppu file }
+        wordversion = ((ord(version_nr)-ord('0')) shl 14)+
+                      ((ord(release_nr)-ord('0')) shl 7)+
+diff --git a/rtl/zos/system.pp b/rtl/zos/system.pp
+index e520ae6464..1bc4f04641 100644
+--- a/rtl/zos/system.pp
++++ b/rtl/zos/system.pp
+@@ -61,8 +61,20 @@ function zos_dsn_exists(p: PAnsiChar): longint; cdecl; external name 'FPC_ZOS_DS
+     argv:PPAnsiChar;
+     envp:PPAnsiChar;
+ 
++const
++  { version of the z/OS port (zos-pascal-llvm); the compiler shows the same
++    value with -iZ }
++  ZosPortVersion = '0.9.0';
++
+ implementation
+ 
++{ version eyecatchers in every program (system.o is always bound): ASCII for
++  strings/grep under z/OS UNIX, EBCDIC for browsing the program object in ISPF
++  or AMBLIST; FPC_ZOS_VERSION is also readable from C }
++const
++  zos_version_ascii: array[0..20] of AnsiChar = 'ZPAS 0.9.0 FPC 3.3.1'#0; public name 'FPC_ZOS_VERSION';
++  zos_version_ebcdic: array[0..20] of byte = ($E9, $D7, $C1, $E2, $40, $F0, $4B, $F9, $4B, $F0, $40, $C6, $D7, $C3, $40, $F3, $4B, $F3, $4B, $F1, 0); public name 'FPC_ZOS_VERSION_E';
++
+ 
+ { OS independant parts}
+ 
+-- 
+2.43.0
+
