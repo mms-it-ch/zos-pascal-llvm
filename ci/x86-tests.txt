@@ -1,0 +1,5 @@
+# Portable Testprogramme, die tests/run-x86.sh auf x86_64-linux übersetzt und ausführt
+# (Zeilen "x86 <pfad>"); dieselben laufen auf z/OS (ci/zos-tests.txt).
+x86 pf8/dectest.pas
+x86 pf8/ccsidtest.pas
+x86 pf8/cobtest.pas

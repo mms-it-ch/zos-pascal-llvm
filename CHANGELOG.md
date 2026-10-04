@@ -18,6 +18,15 @@ Erste Version mit Versionsnummer: Release-Stand, CI und Geschäftsdaten-Anbindun
   RTL/Packages und Testprogramme übersetzen, Python-Skripte, portable Units auf x86_64;
   vorbereiteter z/OS-Job für einen Self-Hosted-Runner (`scripts/ci-zos.sh`).
 - `PRODUKTION.md`: freigegebene Compilerschalter, Versionen, Release-Ablauf, CI-Einrichtung.
+- EBCDIC-Codepages für Datasets und `zosebcdic` einstellbar (`ZOS_CCSID`, `,ccsid=NNN`,
+  `SetDefaultCcsid`, `SetTextCcsid`; FPC-Patch 0044): 1047, 37, 273, 277, 278, 280, 284, 285,
+  297, 500, 871, 1140–1149; Tabellen aus den ICU-Zuordnungen (`scripts/gen-ccsid.py`),
+  portable Unit `zosccsid`.
+- Unit `zosdecimal`: gepackte (COMP-3) und gezonte Dezimalzahlen, `TDecimal` mit Arithmetik
+  ohne Gleitkomma, Prüfung wie S0C7; `zosdecimalbcd` (TBCD).
+- `scripts/copybook2pas.py`: COBOL-Copybook → Pascal-Unit (packed records mit genauen
+  Offsets, Get_/Set_, Stufe 88, OCCURS/ODO, REDEFINES, SYNC, HFP); Laufzeit-Unit `zoscobol`.
+- Tests: `pf8/dectest`, `ccsidtest`, `cobtest`, `tests/` (Python, C-Prüfstand), CI-Schritt `x86`.
 - z/OS-Skripte auch unter Linux ohne WSL (`scripts/zos-hostenv.sh`: ssh/sftp statt
   ssh.exe/sftp.exe).
 

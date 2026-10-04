@@ -9,3 +9,6 @@ pf3/sigexc.pas
 pf3/thrtest.pas
 pf5/abi.pas
 pf7/pkgtest.pas
+pf8/dectest.pas
+pf8/ccsidtest.pas
+pf8/cobtest.pas
