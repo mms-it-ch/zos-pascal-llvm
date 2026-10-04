@@ -11,7 +11,10 @@ Die Tabelle stammt aus den (lizenzierten) z/OS-Headern und wird deshalb nicht
 versioniert, sondern lokal erzeugt:
     gen-zosmap.py > <RTL-Unit-Verzeichnis>/zosmap.txt
 Umgebung: ZOS_CLANG (Standard ~/build/llvm-zos/bin/clang),
-          ZOS_INCLUDE (Standard ~/zos/include).
+          ZOS_INCLUDE (Standard ~/zos/include),
+          ZOS_DB2_INCLUDE: Verzeichnis mit den Db2-ODBC-Headern (sqlcli1.h, sqlcli.h,
+          sqlsystm.h aus <db2hlq>.SDSNC.H, nach ISO-8859-1 gewandelt); dann werden auch
+          deren #pragma map übernommen (Unit zosdb2cli).
 """
 import os
 import re
@@ -21,6 +24,7 @@ import tempfile
 
 CLANG = os.environ.get("ZOS_CLANG", os.path.expanduser("~/build/llvm-zos/bin/clang"))
 INCLUDE = os.environ.get("ZOS_INCLUDE", os.path.expanduser("~/zos/include"))
+DB2_INCLUDE = os.environ.get("ZOS_DB2_INCLUDE", "")
 # ASCII-Modus, UNIX-/SUSv3-Schnittstellen, alle
 # Zeichenkettenfunktionen auf die ASCII-Einstiege, C-RTL-Variablen über Funktionen
 DEFINES = ["-D__CHARSET_LIB=1", "-D_ALL_SOURCE", "-D_UNIX03_SOURCE", "-D_SHARE_EXT_VARS",
@@ -51,10 +55,14 @@ def main():
         for h in HEADERS:
             if os.path.exists(os.path.join(INCLUDE, h)):
                 t.write(f"#include <{h}>\n")
+        extra = []
+        if DB2_INCLUDE and os.path.exists(os.path.join(DB2_INCLUDE, "sqlcli1.h")):
+            t.write("#include <sqlcli1.h>\n")
+            extra = ["-I", DB2_INCLUDE]
         src = t.name
     try:
         out = subprocess.run([CLANG, "--target=s390x-ibm-zos", "-trigraphs",
-                              f"-mzos-sys-include={INCLUDE}", *DEFINES, "-E", src],
+                              f"-mzos-sys-include={INCLUDE}", *extra, *DEFINES, "-E", src],
                              capture_output=True, text=True, encoding="latin-1")
     finally:
         os.unlink(src)

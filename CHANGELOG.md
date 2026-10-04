@@ -26,7 +26,11 @@ Erste Version mit Versionsnummer: Release-Stand, CI und Geschäftsdaten-Anbindun
   ohne Gleitkomma, Prüfung wie S0C7; `zosdecimalbcd` (TBCD).
 - `scripts/copybook2pas.py`: COBOL-Copybook → Pascal-Unit (packed records mit genauen
   Offsets, Get_/Set_, Stufe 88, OCCURS/ODO, REDEFINES, SYNC, HFP); Laufzeit-Unit `zoscobol`.
-- Tests: `pf8/dectest`, `ccsidtest`, `cobtest`, `tests/` (Python, C-Prüfstand), CI-Schritt `x86`.
+- Db2 ODBC/CLI: Unit `zosdb2cli` (CLI-Funktionen, `TDb2Connection`/`TDb2Statement`,
+  `EDb2Error`), `zfpc --db2` (Sidedeck DSNAO64C, STEPLIB/DSNAOINI im Start-Skript),
+  `ZOS_BATCH_STEPLIB`, Messprogramm `pf8/db2probe_c.c`, `pf8/db2test.pas`, JCL, DSNAOINI-Beispiel;
+  Typgrößen auf z/OS noch nicht gemessen.
+- Tests: `pf8/dectest`, `ccsidtest`, `cobtest`, `db2test` (SQLite), `tests/` (Python, C-Prüfstand), CI-Schritt `x86`.
 - z/OS-Skripte auch unter Linux ohne WSL (`scripts/zos-hostenv.sh`: ssh/sftp statt
   ssh.exe/sftp.exe).
 

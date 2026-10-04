@@ -92,7 +92,7 @@ if [ "$ZFPC_DOTTED" = 1 ]; then
 fi
 # Units des Ports aus diesem Repository (rtl/): CCSID-Tabellen, Dezimalzahlen
 UNITS="$UNITS $REPO/rtl/zosccsid.pp $REPO/rtl/zosdecimal.pp $REPO/rtl/zosdecimalbcd.pp
-       $REPO/rtl/zoscobol.pp"
+       $REPO/rtl/zoscobol.pp $REPO/rtl/zosdb2cli.pp"
 for u in $UNITS; do
   case "$u" in /*) src=$u ;; *) src=$R/$u ;; esac
   $PPC -Sg "$src" || FAILED="$FAILED $(basename "$src")"

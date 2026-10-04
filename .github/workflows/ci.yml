@@ -49,7 +49,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends \
-            fp-compiler-3.2.2 fp-units-rtl-3.2.2 llvm-18
+            fp-compiler-3.2.2 fp-units-rtl-3.2.2 llvm-18 \
+            unixodbc-dev libsqliteodbc
           /usr/lib/llvm-18/bin/llc --version | head -3
 
       # Der blobfreie Klon von FPC main (Basis-Commit in fpc/BASE) wird zwischengespeichert;

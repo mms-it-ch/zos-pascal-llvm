@@ -14,6 +14,9 @@
 # SSH-Sitzung, Returncode wird übernommen, CPU-Zeit begrenzt: ZOS_RUN_CPU, Standard 60 s).
 #
 # Zugangsdaten: .zos.env im Repo (ZOS_HOST, ZOS_KEY, ZOS_DIR, ZOS_LEHLQ) oder $ZOS_ENV.
+# Db2 (ZOS_DB2=1, zfpc --db2): zusätzlich das Sidedeck der ODBC-DLL
+# ZOS_DB2HLQ.SDSNMACS(DSNAO64C) (ZOS_DB2_SIDEDECK: anderes Member, z. B. DSNAO64W);
+# das Start-Skript setzt STEPLIB=ZOS_DB2_STEPLIB und DSNAOINI=ZOS_DB2_INI.
 # Läuft in WSL; benutzt ssh.exe/sftp.exe (Git für Windows), weil der Schlüssel dort liegt.
 # Unter Linux ohne WSL (Self-Hosted-Runner der CI) ssh/sftp, siehe zos-hostenv.sh.
 set -e
@@ -84,6 +87,9 @@ done < "$LIST"
 # Archiv zum Unit-Satz: units/zos -> libfpc.a, units/zos-ns (Namensraum) -> libfpcns.a
 RTLLIB=libfpc.a; [ "$(basename "$RTLDIR")" = zos-ns ] && RTLLIB=libfpcns.a
 [ $USELIB = 1 ] && libs="$libs $DIR/lib/$RTLLIB"
+# Db2 ODBC/CLI: Sidedeck der DLL (IMPORT-Anweisungen für SQLConnect, ...)
+DB2SD=""
+[ "$ZOS_DB2" = 1 ] && DB2SD="\"//'${ZOS_DB2HLQ:-DSN}.SDSNMACS(${ZOS_DB2_SIDEDECK:-DSNAO64C})'\""
 
 # Zeilennummern für Backtraces (-gl): der Binder lädt die DWARF-Klassen nicht in
 # den Speicher, deshalb die Zeilentabellen (D_LINE) hier auslesen und als
@@ -132,14 +138,14 @@ done
 # ld hängt an ein vorhandenes Sidedeck an, statt es zu ersetzen
 [ "$KIND" = dll ] && rm -f $DIR/${NAME%.so}.x
 ld -b AMODE=64 -b CASE=MIXED -b DYNAM=DLL -b REUS=RENT -b MAP \
-   $ENTRY -V $LDOPTS -o $DIR/$NAME $objs $libs \$sidedecks \
+   $ENTRY -V $LDOPTS -o $DIR/$NAME $objs $libs \$sidedecks $DB2SD \
    -S "//'$LE.SCEEBND2'" \
    "//'$LE.SCEELIB(CELQS001)'" "//'$LE.SCEELIB(CELQS003)'" > $DIR/$NAME.map 2>&1
 rc=\$?
 # ZOS_PDS=MEMBER: zusätzlich als Programmobjekt in die PDSE ZOS_PASLIB (Batch, JCL)
 if [ \$rc -le 4 ] && [ -n "$ZOS_PDS" ] && [ "$KIND" = exe ]; then
   ld -b AMODE=64 -b CASE=MIXED -b DYNAM=DLL -b REUS=RENT -b MAP \
-     $ENTRY -V $LDOPTS -o "//'$ZOS_PASLIB($ZOS_PDS)'" $objs $libs \$sidedecks \
+     $ENTRY -V $LDOPTS -o "//'$ZOS_PASLIB($ZOS_PDS)'" $objs $libs \$sidedecks $DB2SD \
      -S "//'$LE.SCEEBND2'" \
      "//'$LE.SCEELIB(CELQS001)'" "//'$LE.SCEELIB(CELQS003)'" > $DIR/$NAME-pds.map 2>&1
   pdsrc=\$?
@@ -171,6 +177,9 @@ fi
 # Lokales Start-Skript
 # (keine Zugangsdaten im Skript: sie werden beim Start aus .zos.env gelesen)
 VERSION=$(cat "$(dirname "$SELF")/../VERSION" 2>/dev/null || echo unbekannt)
+# Db2: Lade-Bibliotheken (DSNAO64C) und ODBC-Initialisierungsdatei beim Start
+DB2LINE='DB2ENV=""'
+[ "$ZOS_DB2" = 1 ] && DB2LINE='DB2ENV="export STEPLIB=$ZOS_DB2_STEPLIB; export DSNAOINI=$ZOS_DB2_INI;"'
 cat > "$OUT" <<EOF
 #!/bin/sh
 # Startet $NAME auf z/OS (Arbeitsverzeichnis ZOS_DIR/run/$NAME), erzeugt von zos-ld
@@ -190,6 +199,8 @@ CEE=""; [ -n "\$ZOS_RUN_CEEOPTS" ] && CEE="export _CEE_RUNOPTS='\$ZOS_RUN_CEEOPT
 # ZOS_RUN_DLLS=1: DLLs aus ZOS_DIR ins Arbeitsverzeichnis verlinken (Testsuite: Programme
 # laden ihre Bibliothek als ./lib<name>.so)
 DLLS=""; [ "\$ZOS_RUN_DLLS" = 1 ] && DLLS="for d in \$ZOS_DIR/lib*.so; do [ -f \\\$d ] && ln -s \\\$d .; done;"
+# Db2 (gebunden mit zfpc --db2): STEPLIB und DSNAOINI aus .zos.env (ZOS_DB2_STEPLIB, ZOS_DB2_INI)
+$DB2LINE
 # ZOS_RUN_FILES: Dateien aus dem Verzeichnis dieses Skripts vorher ins Arbeitsverzeichnis
 # laden (Testsuite: %FILES, die dotest neben das Programm kopiert)
 if [ -n "\$ZOS_RUN_FILES" ]; then
@@ -198,6 +209,6 @@ if [ -n "\$ZOS_RUN_FILES" ]; then
     for f in \$ZOS_RUN_FILES; do [ -f "\$D/\$f" ] && echo "put \$(zos_winpath "\$D/\$f") \$R/\$f"; done
   } | \$ZOS_SFTP -q -i "\$ZOS_KEY" -o BatchMode=yes -b - "\$ZOS_HOST" >/dev/null
 fi
-exec \$ZOS_SSH -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$CEE \$DLLS export LIBPATH=\$ZOS_DIR:\$ZOS_DIR/lib:\\\$LIBPATH; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
+exec \$ZOS_SSH -i "\$ZOS_KEY" -o BatchMode=yes "\$ZOS_HOST" "mkdir -p \$R && cd \$R && ulimit -t \${ZOS_RUN_CPU:-60}; \$CEE \$DLLS \$DB2ENV export LIBPATH=\$ZOS_DIR:\$ZOS_DIR/lib:\\\$LIBPATH; \$ZOS_DIR/$NAME \$args > .out 2> .err; rc=\\\$?; iconv -f ISO8859-1 -t IBM-1047 .out; iconv -f ISO8859-1 -t IBM-1047 .err >&2; cd \$ZOS_DIR && rm -rf \$R; \$ONCE exit \\\$rc"
 EOF
 chmod +x "$OUT"

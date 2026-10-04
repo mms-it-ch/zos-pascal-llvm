@@ -1,0 +1,21 @@
+; ODBC-Initialisierungsdatei für Db2 for z/OS (DSNAOINI), Beispiel für pf8/db2test.
+; Als USS-Datei (z. B. $ZOS_DIR/dsnaoini, Umgebungsvariable DSNAOINI, in .zos.env:
+; ZOS_DB2_INI) oder als Dataset (Batch: //DSNAOINI DD DISP=SHR,DSN=...).
+; Platzhalter: DB2A = Subsystem-ID bzw. Location (auf dem System erfragen).
+[COMMON]
+MVSDEFAULTSSID=DB2A
+; Anwendung im ASCII-Modus: Zeichendaten in der ASCII-CCSID des Subsystems
+CURRENTAPPENSCHEME=ASCII
+; 0 = keine Ablaufverfolgung; zur Fehlersuche APPLTRACE=1, APPLTRACEFILENAME=/tmp/odbc.trc
+APPLTRACE=0
+; eine Verbindung je Kontext (RRSAF)
+MULTICONTEXT=0
+CONNECTTYPE=1
+
+[DB2A]
+MVSATTACHTYPE=RRSAF
+PLANNAME=DSNACLI
+
+; Datenquelle (SQLConnect('DB2A')): Location-Name des Subsystems
+[DB2ALOC]
+AUTOCOMMIT=0
