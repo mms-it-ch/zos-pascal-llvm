@@ -11,6 +11,7 @@ Die portablen Teile sind auf x86_64-linux getestet (`tests/run-x86.sh`, CI-Schri
 | Copybook → Pascal | `scripts/copybook2pas.py`, `rtl/zoscobol.pp`, `tests/copybooks/` | getestet (`cobtest` 60/60, `tests/test_copybook2pas.py`) | noch nicht getestet |
 | AMODE 31 ↔ 64 | `rtl/zoscall31.pp`, `runtime/zosc31.c`, `pf8/zpcall31.s` (Brücke), `zpasm1.s`, `zpcob1.cbl`, `zp64call.s`, `zpcob2.cbl`, `call64lib.pas`, `call31test.pas`, `build31*.sh`, `call64.jcl` | Pascal/C-Seite getestet gegen eine Brücken-Attrappe (`call31test` 11/11, `tests/c/fake_zpcall31.c`); `call64lib` über einen Lade-Treiber | **noch nicht getestet** (HLASM, COBOL, CEL4RO64) |
 | Db2 ODBC/CLI | `rtl/zosdb2cli.pp`, `rtl/zosdb2cli_zos.inc`, `pf8/db2probe*.{c,pas}`, `zfpc --db2`, `pf8/db2test.pas`, `*.jcl`, `dsnaoini.txt` | Pascal-Seite getestet gegen unixODBC + SQLite (`db2test` 13/13); Messprogramm gegen unixODBC-Header geprüft | **noch nicht getestet**; Typgrößen nicht gemessen |
+| Db2 über SQLDB | FPC-Patch 0045 (`odbcsql`, `odbcconn`), `pf8/sqldbtest.pas` | `sqldbtest` 10/10 gegen SQLite | **noch nicht getestet** |
 
 ## Prüfliste für z/OS (in dieser Reihenfolge, alles noch offen)
 
@@ -22,7 +23,7 @@ Die portablen Teile sind auf x86_64-linux getestet (`tests/run-x86.sh`, CI-Schri
 3. `dectest` 110/0 und `cobtest` 60/0 (reines Pascal: Big-Endian-Gegenprobe).
 4. `ccsidtest` 30/0 (Datasets), auch mit `ZOS_CCSID=273`.
 5. Db2: Header holen, `db2probe` → `rtl/zosdb2cli_zos.inc` ersetzen, RTL neu bauen, `db2test`
-   13/0 (Abschnitt Db2).
+   13/0, danach `sqldbtest` 10/0 (Abschnitt Db2).
 6. AMODE 31: `pf8/build31.sh`, `call31test` 11/0, Batch `call64.jcl` RC 0 (z/OS 3.1/APAR).
 7. CI-Runner einrichten (`PRODUKTION.md`, Abschnitt CI) und `ZOS_RUNNER=true` setzen.
 
@@ -268,12 +269,30 @@ ohne `CURRENTAPPENSCHEME=ASCII` (unlesbare Texte), fehlende Rechte (SQLCODE -551
 Lokal (x86_64, unixODBC + SQLite, CI-Schritt `x86`):
 `./db2test "DRIVER=SQLite3;Database=/tmp/db2test.db"` → 13/13.
 
-### SQLDB-Connector (fcl-db)
+### SQLDB (fcl-db): `TODBCConnection` mit Db2 (FPC-Patch 0045)
 
-Nicht umgesetzt. Weg, sobald die Unit auf z/OS läuft: eine `TSQLConnection`-Ableitung nach dem
-Muster von `TODBCConnection` (`packages/fcl-db/src/sqldb/odbc/odbcconn.pas`), die statt der
-dynamisch geladenen `odbcsql` die Deklarationen von `zosdb2cli` benutzt (dort sind Handles
-Zeiger, bei Db2 z/OS vermutlich Ganzzahlen – deshalb nicht einfach `odbcconn` mit DSNAO64C).
+Für Programme, die mit `TSQLQuery`/`TSQLTransaction`/Datenmodulen arbeiten, geht FPCs eigener
+ODBC-Connector: auf z/OS bindet `odbcsql` statisch gegen DSNAO64C (`external 'dsnao64c'`; `zos-ld`
+nimmt dafür das Db2-Sidedeck und setzt STEPLIB/DSNAOINI im Start-Skript wie `zfpc --db2`) und
+übernimmt die Typen aus `rtl/zosdb2cli_zos.inc` – dieselben (noch zu messenden) wie `zosdb2cli`.
+`odbcconn` benutzt dort die statische statt der dynamisch ladenden Unit.
+
+```pascal
+uses sqldb, odbcconn;
+c := TODBCConnection.Create(nil);
+c.DatabaseName := 'DB2A';               { Datenquelle aus DSNAOINI }
+```
+
+- Dabei gefunden (allgemeiner FPC-Fehler, auch x86_64-linux): `odbcsql` erklärt
+  `SQLINTEGER = clong`, auf 64-Bit-Unix 8 Byte; der Treiber schreibt 4 Byte. Unter Linux mit SQLite
+  kommt `SQLGetDiagRec` mit `native error = -4294967295` statt 1 zurück, auf Big-Endian stünde
+  der Wert immer in der falschen Hälfte. Für z/OS durch die gemessenen Typen behoben;
+  Upstream-Meldung `fpc/upstream/06-odbc-sqlinteger.md` mit Patch 0008.
+- Test `pf8/sqldbtest.pas` (10 Prüfungen: DDL, Parameter Text/Integer/BCD/Double/NULL, Lesen,
+  Commit/Rollback, SQLSTATE): lokal gegen SQLite 10/10 (CI-Schritt `x86`). z/OS:
+  `sh ../scripts/zfpc -O2 sqldbtest.pas && ./sqldbtest DB2A` – erwartet 10/0, Feldtypen
+  `Integer String FMTBcd Float` (Db2 liefert DECIMAL als BCD; SQLite als Text).
+  **Auf z/OS noch nicht getestet**; Voraussetzungen wie bei `db2test` (vorher messen).
 
 ## AMODE 31 ↔ AMODE 64: COBOL, PL/I, Assembler
 

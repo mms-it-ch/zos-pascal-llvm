@@ -75,7 +75,7 @@ Nicht verändern: `-Clv17.0` (LLVM-Version der IR-Ausgabe, passend zum eigenen L
 
 | Teil | Stand |
 |---|---|
-| FPC | `main` 37b8a1a9 (`fpc/BASE`) + Patches `fpc/patches/0001`–`0043` |
+| FPC | `main` 37b8a1a9 (`fpc/BASE`) + Patches `fpc/patches/0001`–`0045` |
 | LLVM | Zweig `pascal-zos` auf `zos-fixes` (`c854662c0`, LLVM 23.1.2) + `llvm/patches/0001`–`0011` |
 | Start-Compiler | FPC 3.2.2 (für den nativen FPC main) |
 | z/OS | LE, C-RTL ASCII-Einstiege aus den Headern (`zosmap.txt`, lokal erzeugt) |
@@ -106,7 +106,7 @@ Nicht verändern: `-Clv17.0` (LLVM-Version der IR-Ausgabe, passend zum eigenen L
 |---|---|---|
 | `source` | FPC main blobfrei klonen (Cache), Basis `fpc/BASE`, `git am fpc/patches/*.patch` | ~1 min (ohne Cache) |
 | `compiler` | nativer FPC main mit FPC 3.2.2 (`make cycle`), dann `ppcs390x` (LLVM=1) | ~1,5 min |
-| `rtl` | `build-rtl.sh` mit `ZFPC_CI=1`: RTL + 337 Package-Units bis zum Objekt (llc 18), gescheiterte Units = `ci/package-failures.txt` | ~4 min |
+| `rtl` | `build-rtl.sh` mit `ZFPC_CI=1`: RTL + 340 Package-Units bis zum Objekt (llc 18), gescheiterte Units = `ci/package-failures.txt` | ~4 min |
 | `pf` | alle `pf*/*.pas` mit `-Cn` (ohne Binden) | ~2 min |
 | `python` | `py_compile` aller Skripte, `tests/test_*.py` | Sekunden |
 | `x86` | portable Units (CCSID, Dezimal) auf x86_64 übersetzen und testen (`tests/run-x86.sh`) | Sekunden |

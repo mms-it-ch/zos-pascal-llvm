@@ -30,6 +30,10 @@ Erste Version mit Versionsnummer: Release-Stand, CI und Geschäftsdaten-Anbindun
   `EDb2Error`), `zfpc --db2` (Sidedeck DSNAO64C, STEPLIB/DSNAOINI im Start-Skript),
   `ZOS_BATCH_STEPLIB`, Messprogramm `pf8/db2probe_c.c`, `pf8/db2test.pas`, JCL, DSNAOINI-Beispiel;
   Typgrößen auf z/OS noch nicht gemessen.
+- SQLDB mit Db2: `TODBCConnection` auf z/OS statisch gegen DSNAO64C mit den gemessenen
+  CLI-Typen (FPC-Patch 0045), Packages `odbc` und `fcl-db/src/sqldb/odbc` im Bau,
+  `pf8/sqldbtest.pas`; Meldung an FPC vorbereitet: `SQLINTEGER = clong` auf 64-Bit-Unix
+  (`fpc/upstream/06-odbc-sqlinteger.md`).
 - AMODE 31 ↔ 64: Unit `zoscall31` mit eigenem Übergang (HLASM-Brücke `pf8/zpcall31.s` als
   Prozess, `runtime/zosc31.c`), COBOL → Pascal über LE CEL4RO64 (`pf8/zp64call.s`), Test-
   programme ZPASM1 (HLASM), ZPCOB1/ZPCOB2 (COBOL), `call64lib`; `ZOS_RUN_ENV` im Start-Skript.

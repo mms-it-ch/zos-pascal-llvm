@@ -1,0 +1,138 @@
+From b2ad268de3dc9d31f543dc47d0047ae79a99df3c Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Tue, 6 Oct 2026 09:17:46 +0000
+Subject: [PATCH] odbc, sqldb: ODBC for Db2 for z/OS (TODBCConnection)
+
+On z/OS the ODBC driver is the Db2 DLL DSNAO64C. odbcsql binds it
+statically (external 'dsnao64c'; zos-ld adds its side deck) and takes
+the CLI types from zosdb2cli_zos.inc of zos-pascal-llvm, as measured on
+z/OS: SQLINTEGER is 32 bit there and handles may be integers. With
+SQLINTEGER = clong (64 bit) a C int written through a PSQLINTEGER would
+land in the upper half on big endian (e.g. the native error of
+SQLGetDiagRec).
+
+odbcconn uses the static odbcsql on z/OS instead of the dynamic loader and
+compares the environment handle with SQL_NULL_HENV instead of Assigned,
+which also works for integer handles.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ packages/fcl-db/src/sqldb/odbc/odbcconn.pas | 13 +++++++++---
+ packages/odbc/src/odbcsql.inc               | 22 +++++++++++++++++++++
+ 2 files changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/packages/fcl-db/src/sqldb/odbc/odbcconn.pas b/packages/fcl-db/src/sqldb/odbc/odbcconn.pas
+index c66c357ec2..9dda30c69c 100644
+--- a/packages/fcl-db/src/sqldb/odbc/odbcconn.pas
++++ b/packages/fcl-db/src/sqldb/odbc/odbcconn.pas
+@@ -17,12 +17,15 @@
+ 
+ interface
+ 
++{ z/OS: Db2 ODBC (DSNAO64C) is bound statically through odbcsql; the
++  dynamic loader of odbcsqldyn has no library to load there }
+ {$IFDEF FPC_DOTTEDUNITS}
+ uses
+-  System.Classes, System.SysUtils, Data.Db, Data.Sqldb, Data.BufDataset, Api.OdbcDyn;
++  System.Classes, System.SysUtils, Data.Db, Data.Sqldb, Data.BufDataset,
++  {$IFDEF ZOS}Api.Odbc{$ELSE}Api.OdbcDyn{$ENDIF};
+ {$ELSE FPC_DOTTEDUNITS}
+ uses
+-  Classes, SysUtils, db, sqldb, BufDataset, odbcsqldyn;
++  Classes, SysUtils, db, sqldb, BufDataset, {$IFDEF ZOS}odbcsql{$ELSE}odbcsqldyn{$ENDIF};
+ {$ENDIF FPC_DOTTEDUNITS}
+ 
+ type
+@@ -1660,7 +1663,9 @@ function TODBCConnection.GetConnectionInfo(InfoType: TConnInfoType): string;
+ constructor TODBCEnvironment.Create;
+ begin
+   // make sure odbc is loaded
++  {$IFNDEF ZOS}
+   if ODBCLoadCount=0 then InitialiseOdbc;
++  {$ENDIF}
+   Inc(ODBCLoadCount);
+ 
+   // allocate environment handle
+@@ -1679,7 +1684,7 @@ destructor TODBCEnvironment.Destroy;
+   Res:SQLRETURN;
+ begin
+   // free environment handle
+-  if assigned(FENVHandle) then
++  if FENVHandle<>SQL_NULL_HENV then
+     begin
+     Res:=SQLFreeHandle(SQL_HANDLE_ENV, FENVHandle);
+     if Res=SQL_ERROR then
+@@ -1690,7 +1695,9 @@ destructor TODBCEnvironment.Destroy;
+   if ODBCLoadCount>0 then
+     begin
+     Dec(ODBCLoadCount);
++    {$IFNDEF ZOS}
+     if ODBCLoadCount=0 then ReleaseOdbc;
++    {$ENDIF}
+     end;
+ end;
+ 
+diff --git a/packages/odbc/src/odbcsql.inc b/packages/odbc/src/odbcsql.inc
+index 2b644669d0..f22dbc2969 100644
+--- a/packages/odbc/src/odbcsql.inc
++++ b/packages/odbc/src/odbcsql.inc
+@@ -20,7 +20,9 @@
+  {$IFDEF WINDOWS}
+   { $linklib odbc32}
+  {$ELSE}
++  {$IFNDEF ZOS}
+   {$linklib odbc}
++  {$ENDIF}
+  {$ENDIF}
+ {$endif}
+ 
+@@ -41,7 +43,13 @@ interface
+ {$IFDEF Unix}
+   {$DEFINE extdecl:=cdecl}
+   const
++  {$IFDEF ZOS}
++    { Db2 for z/OS ODBC, 64 bit: the DLL DSNAO64C; zos-ld binds its side deck
++      <db2hlq>.SDSNMACS(DSNAO64C) for "external 'dsnao64c'" }
++    odbclib = 'dsnao64c';
++  {$ELSE}
+     odbclib = 'libodbc.'+sharedsuffix;
++  {$ENDIF}
+ {$ENDIF}
+ {$IFDEF Windows}
+   {$DEFINE extdecl:=stdcall}
+@@ -64,6 +72,17 @@ interface
+    ftMemo      SQL_BINARY // SQL_VARCHAR
+ *)
+ 
++{$IFDEF ZOS}
++{ z/OS: the types of sqlcli1.h (Db2 for z/OS, 64 bit) as measured by the
++  probe of zos-pascal-llvm (rtl/zosdb2cli_zos.inc, also used by the unit
++  zosdb2cli; build-packages.sh puts it into the include path). SQLINTEGER is
++  32 bit there: clong would be 64 bit, and on big endian a C int written to an
++  8-byte variable lands in the wrong half. Handles may be integers. }
++{$i zosdb2cli_zos.inc}
++type
++  SQLWCHAR     = WideChar;
++  SQLFLOAT     = cdouble;
++{$ELSE ZOS}
+ type
+   SQLCHAR      = cuchar;
+   SQLWCHAR     = WideChar;
+@@ -80,11 +99,14 @@ interface
+   SQLRETURN    = SQLSMALLINT;
+   SQLPOINTER   = pointer;
+   SQLHANDLE    = pointer;
++{$ENDIF ZOS}
+   SQLHENV      = SQLHANDLE;
+   SQLHDBC      = SQLHANDLE;
+   SQLHSTMT     = SQLHANDLE;
+   SQLHDESC     = SQLHANDLE;
++{$IFNDEF ZOS}
+   SQLHWND      = pointer;
++{$ENDIF}
+   SQLSETPOSIROW= {$IF DEFINED(CPU64)}cuint64{$ELSE}SQLUSMALLINT{$ENDIF};
+   PSQLCHAR      = PAnsiChar;
+   PSQLWCHAR     = PWideChar;
+-- 
+2.43.0
+

@@ -31,7 +31,15 @@ export ZOS_CALL31_BRIDGE=$WORK/fake_zpcall31
 
 echo "-- Pascal-Units und pf8-Tests"
 RO=$FPCSRC/packages/rtl-objpas/src/inc
-PPC="$HOSTFPC -n -Fu$FPCSRC/rtl/units/x86_64-linux -Fu$RO -Fi$RO -Fu$REPO/rtl -Fu$REPO/pf8 -Fl$WORK/u -FU$WORK/u -FE$WORK"
+# fcl-db/SQLDB für pf8/sqldbtest aus den Quellen (die Packages sind für x86_64 nicht gebaut)
+P=$FPCSRC/packages
+PK=""
+for d in fcl-db/src/base fcl-db/src/sqldb fcl-db/src/sqldb/odbc fcl-db/src/dbase fcl-db/src/export \
+         fcl-db/src/datadict odbc/src fcl-base/src fcl-base/src/unix fcl-json/src fcl-xml/src \
+         rtl-extra/src/inc rtl-extra/src/unix hash/src; do
+  PK="$PK -Fu$P/$d -Fi$P/$d"
+done
+PPC="$HOSTFPC -n -Fu$FPCSRC/rtl/units/x86_64-linux -Fu$RO -Fi$RO -Fu$REPO/rtl -Fu$REPO/pf8 $PK -Fl$WORK/u -FU$WORK/u -FE$WORK"
 # Zeilen "x86 <programm> [argumente]"; "x86odbc ...": nur mit unixODBC + SQLite-Treiber
 sed -n 's/^\(x86\|x86odbc\) //p' "$REPO/ci/x86-tests.txt" > "$WORK/list"
 while read -r t args; do

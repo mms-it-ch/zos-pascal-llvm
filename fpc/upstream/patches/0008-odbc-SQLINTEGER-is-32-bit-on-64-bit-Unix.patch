@@ -1,0 +1,39 @@
+From e773ee3d18e0518cde7a8c8bfcdf22cbd2b2ba5a Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Tue, 6 Oct 2026 09:31:08 +0000
+Subject: [PATCH] odbc: SQLINTEGER is 32 bit on 64-bit Unix
+
+unixODBC and iODBC define SQLINTEGER as int when long is 64 bit
+(sqltypes.h). With clong the driver writes 4 bytes through a
+PSQLINTEGER/var parameter and the other half keeps its old contents,
+e.g. the native error of SQLGetDiagRec: -4294967295 instead of 1 on
+x86_64-linux with SQLite (on big endian the value lands in the upper
+half).
+
+Assisted-by: Claude Code (Anthropic)
+---
+ packages/odbc/src/odbcsql.inc | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/packages/odbc/src/odbcsql.inc b/packages/odbc/src/odbcsql.inc
+index 2b644669d0..5f1cffd4c6 100644
+--- a/packages/odbc/src/odbcsql.inc
++++ b/packages/odbc/src/odbcsql.inc
+@@ -70,8 +70,14 @@ interface
+   SQLSCHAR     = cschar;
+   SQLSMALLINT  = csshort;
+   SQLUSMALLINT = cushort;
++{$IF DEFINED(CPU64) AND NOT DEFINED(WINDOWS)}
++  { unixODBC and iODBC (sqltypes.h): int on LP64, not long }
++  SQLINTEGER   = cint;
++  SQLUINTEGER  = cuint;
++{$ELSE}
+   SQLINTEGER   = clong;
+   SQLUINTEGER  = culong;
++{$ENDIF}
+   SQLLEN       = PtrInt;
+   SQLULEN      = PtrUInt;
+   SQLREAL      = cfloat;
+-- 
+2.43.0
+

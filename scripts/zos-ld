@@ -81,7 +81,12 @@ while read -r kind path; do
         cp "$path" "$TMP.dbg/$f"
       fi
       if [ "$kind" = obj ]; then objs="$objs $f"; else libs="$libs $f"; fi ;;
-    clib) clibs="$clibs $path" ;;
+    clib)
+      # Db2 ODBC (odbcsql/odbcconn auf z/OS: external 'dsnao64c'): Sidedeck der DLL
+      case "$path" in
+        [dD][sS][nN][aA][oO]64[cCwW]) ZOS_DB2=1 ;;
+        *) clibs="$clibs $path" ;;
+      esac ;;
   esac
 done < "$LIST"
 # Archiv zum Unit-Satz: units/zos -> libfpc.a, units/zos-ns (Namensraum) -> libfpcns.a

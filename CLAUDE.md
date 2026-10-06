@@ -211,8 +211,8 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
 - **PF8 Produktion (04.10.2026, Cloud-Sitzung ohne z/OS-Zugang, `pf8/README.md`, `PRODUKTION.md`):**
   Version 0.9.0 (`VERSION`, `ppcs390x -iZ`, `ZosPortVersion`, Eyecatcher; FPC-Patch 0043), CHANGELOG.md.
   FPC-Patch 0042: cwstring mit FPC 3.2.2 als Start-Compiler. CI `.github/workflows/ci.yml` =
-  `scripts/ci-build.sh` (Patches 44/44 auf `fpc/BASE`, `make cycle` mit 3.2.2, ppcs390x, RTL +
-  337 Package-Units mit Distributions-llc 18 (`ZFPC_CI=1`: ohne runtime/*.c und zosmap; GOFF
+  `scripts/ci-build.sh` (Patches 45/45 auf `fpc/BASE`, `make cycle` mit 3.2.2, ppcs390x, RTL +
+  340 Package-Units mit Distributions-llc 18 (`ZFPC_CI=1`: ohne runtime/*.c und zosmap; GOFF
   nur Gerüst, `library` stürzt in llc 18/20 ab → übersprungen), pf-Programme `-Cn`, Python,
   x86-Tests); GitHub-Job ~3 min. z/OS-Job für Self-Hosted-Runner (`vars.ZOS_RUNNER`, Secrets),
   Skripte dafür auch ohne WSL (`scripts/zos-hostenv.sh`). Skripte waren im Repo nicht ausführbar.
@@ -225,6 +225,10 @@ Pascal-Compiler für z/OS: lokal übersetzen (Free Pascal + LLVM), auf z/OS bind
   (Attrappe), db2test 13 (unixODBC+SQLite), zosdsn.c-Prüfstand 131, Python 18. **Auf z/OS ist
   von PF8 noch nichts gelaufen** – Reihenfolge und Erwartungen in `pf8/README.md`.
   Namensfalle: C-Datei und Pascal-Unit gleichen Namens überschreiben sich in `units/zos` (`zosc31.c`).
+  SQLDB (06.10.2026, FPC-Patch 0045): `TODBCConnection` auf z/OS statisch gegen DSNAO64C mit den
+  Typen aus `rtl/zosdb2cli_zos.inc` (`clib dsnao64c` → zos-ld nimmt das Db2-Sidedeck), `sqldbtest`
+  lokal 10/10. Allgemeiner FPC-Fehler gefunden: `odbcsql` `SQLINTEGER = clong` = 8 Byte auf
+  64-Bit-Unix (`fpc/upstream/06-odbc-sqlinteger.md`, Patch 0008).
 
 ## Nächste Schritte
 1. PF3: FPC-Testsuite (`~/src/fpc/tests`) auf z/OS. **tbs (27.09.2026): 772/784 ok, Referenz
