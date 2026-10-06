@@ -1,0 +1,106 @@
+From a6fd2988058408117e25352601021b3275f7ae66 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Tue, 6 Oct 2026 17:28:33 +0200
+Subject: [PATCH] [SystemZ][z/OS] Classify GOFF initializers with relocations
+ as ReadOnlyWithRel
+
+Update of "Keep read-only data in the code section only if local and
+without relocations" (part of the zos-fixes base) to the reviewed version
+of llvm/llvm-project#226683: getKindForGlobal returns ReadOnlyWithRel on
+GOFF for every initializer that needs a relocation, and the section
+selection and isAddressedViaADA check only the linkage.
+isReadOnlyInCodeSection is removed. The placement is the same as before.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ .../llvm/CodeGen/TargetLoweringObjectFileImpl.h    |  7 -------
+ llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp  | 14 +++-----------
+ llvm/lib/Target/SystemZ/SystemZSubtarget.cpp       |  4 +++-
+ llvm/lib/Target/TargetLoweringObjectFile.cpp       |  8 ++++++++
+ 4 files changed, 14 insertions(+), 19 deletions(-)
+
+diff --git a/llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h b/llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h
+index f71602ea3c..086806df48 100644
+--- a/llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h
++++ b/llvm/include/llvm/CodeGen/TargetLoweringObjectFileImpl.h
+@@ -326,13 +326,6 @@ public:
+ 
+   void getModuleMetadata(Module &M) override;
+ 
+-  /// Returns true if the read-only global \p GO of kind \p Kind is placed into
+-  /// the code section and can therefore be addressed PC-relative. This is only
+-  /// the case for local data whose initializer needs no relocations: references
+-  /// from other translation units are always parts in the WSA, and function
+-  /// pointers point to function descriptors in the WSA.
+-  static bool isReadOnlyInCodeSection(const GlobalObject *GO, SectionKind Kind);
+-
+   bool shouldPutJumpTableInFunctionSection(bool UsesLabelDifference,
+                                            const Function &F) const override;
+   MCSection *getSectionForConstant(const DataLayout &DL, SectionKind Kind,
+diff --git a/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp b/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
+index 27960b9fdc..aa0ac9c3bd 100644
+--- a/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
++++ b/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
+@@ -2890,22 +2890,14 @@ MCSection *TargetLoweringObjectFileGOFF::getSectionForLSDA(
+                                      WSA);
+ }
+ 
+-bool TargetLoweringObjectFileGOFF::isReadOnlyInCodeSection(
+-    const GlobalObject *GO, SectionKind Kind) {
+-  if (!Kind.isReadOnly() || !GO->hasLocalLinkage())
+-    return false;
+-  if (const auto *GVar = dyn_cast<GlobalVariable>(GO))
+-    if (GVar->hasInitializer() && GVar->getInitializer()->needsRelocation())
+-      return false;
+-  return true;
+-}
+-
+ MCSection *TargetLoweringObjectFileGOFF::SelectSectionForGlobal(
+     const GlobalObject *GO, SectionKind Kind, const TargetMachine &TM) const {
+   auto *Symbol = TM.getSymbol(GO);
+ 
++  // Read-only data stays in the code section only if it is local: references
++  // from other translation units are always parts in the WSA.
+   if (Kind.isBSS() || Kind.isData() || Kind.isReadOnlyWithRel() ||
+-      (Kind.isReadOnly() && !isReadOnlyInCodeSection(GO, Kind))) {
++      (Kind.isReadOnly() && !GO->hasLocalLinkage())) {
+     GOFF::ESDBindingScope PRBindingScope =
+         GO->hasExternalLinkage()
+             ? (GO->hasDefaultVisibility() ? GOFF::ESD_BSC_ImportExport
+diff --git a/llvm/lib/Target/SystemZ/SystemZSubtarget.cpp b/llvm/lib/Target/SystemZ/SystemZSubtarget.cpp
+index d485503849..0f7b086606 100644
+--- a/llvm/lib/Target/SystemZ/SystemZSubtarget.cpp
++++ b/llvm/lib/Target/SystemZ/SystemZSubtarget.cpp
+@@ -100,7 +100,9 @@ bool SystemZSubtarget::isAddressedViaADA(const GlobalValue *GV) const {
+     SectionKind GOKind = TargetLoweringObjectFile::getKindForGlobal(
+         GO, TLInfo.getTargetMachine());
+     // Must match the section selection in TargetLoweringObjectFileGOFF.
+-    return !TargetLoweringObjectFileGOFF::isReadOnlyInCodeSection(GO, GOKind);
++    if (GOKind.isReadOnly() && GO->hasLocalLinkage())
++      return false;
++    return true;
+   }
+   return true;
+ }
+diff --git a/llvm/lib/Target/TargetLoweringObjectFile.cpp b/llvm/lib/Target/TargetLoweringObjectFile.cpp
+index 43649a0cd9..c262e5d619 100644
+--- a/llvm/lib/Target/TargetLoweringObjectFile.cpp
++++ b/llvm/lib/Target/TargetLoweringObjectFile.cpp
+@@ -347,6 +347,14 @@ SectionKind TargetLoweringObjectFile::getKindForGlobal(const GlobalObject *GO,
+       if (containsConstantPtrAuth(C))
+         return SectionKind::getReadOnlyWithRel();
+ 
++      // GOFF: data in the code section is shared by all instances of the
++      // program, while function descriptors and other data live in the WSA
++      // of each instance. The binder rejects a relocation in the code section
++      // that refers to the WSA, even a local one, so every initializer that
++      // needs a relocation goes to the WSA.
++      if (TM.getTargetTriple().isOSBinFormatGOFF())
++        return SectionKind::getReadOnlyWithRel();
++
+       // In static, ROPI and RWPI relocation models, the linker will resolve
+       // all addresses, so the relocation entries will actually be constants by
+       // the time the app starts up.  However, we can't put this into a
+-- 
+2.43.0
+
