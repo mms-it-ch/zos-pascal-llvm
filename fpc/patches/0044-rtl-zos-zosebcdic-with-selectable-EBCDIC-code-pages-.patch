@@ -1,0 +1,150 @@
+From d92d333711337484d6a08eacbc635b00a93c64ab Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Sun, 4 Oct 2026 19:45:25 +0000
+Subject: [PATCH] rtl/zos: zosebcdic with selectable EBCDIC code pages (CCSID)
+
+Text files on data sets and the conversions of zosebcdic are no longer
+fixed to IBM-1047: the C runtime of the port (runtime/zosdsn.c of
+zos-pascal-llvm) has tables for the CECP code pages 1047, 37, 273, 277,
+278, 280, 284, 285, 297, 500, 871 and the euro variants 1140-1149.
+New: EbcdicToAscii/AsciiToEbcdic with a ccsid parameter (string versions
+stop with runtime error 201 for an unsupported CCSID), SetDefaultCcsid,
+GetDefaultCcsid, CcsidSupported, SetTextCcsid/GetTextCcsid for one text
+file. The default comes from the environment variable ZOS_CCSID; a file
+name may carry ',ccsid=NNN'.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ rtl/zos/zosebcdic.pp | 99 +++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 94 insertions(+), 5 deletions(-)
+
+diff --git a/rtl/zos/zosebcdic.pp b/rtl/zos/zosebcdic.pp
+index 037be36f30..7ed9e805c3 100644
+--- a/rtl/zos/zosebcdic.pp
++++ b/rtl/zos/zosebcdic.pp
+@@ -1,11 +1,19 @@
+ {
+     This file is part of the Free Pascal run time library.
+ 
+-    z/OS: conversion between EBCDIC (IBM-1047) and ISO-8859-1, the character
+-    set of the run time library (ASCII mode). Output of z/OS UNIX commands
+-    (e.g. read from a pipe with TProcess) and data from other programs are
+-    usually EBCDIC. Line ends: EBCDIC NL (X'15') <-> LF, as iconv on z/OS UNIX
+-    and the text files on MVS data sets.
++    z/OS: conversion between EBCDIC and ISO-8859-1, the character set of the
++    run time library (ASCII mode). Output of z/OS UNIX commands (e.g. read
++    from a pipe with TProcess) and data from other programs are usually
++    EBCDIC. Line ends: EBCDIC NL (X'15') <-> LF, as iconv on z/OS UNIX and the
++    text files on MVS data sets.
++
++    The EBCDIC code page (CCSID) is IBM-1047 by default. The environment
++    variable ZOS_CCSID or SetDefaultCcsid select another one for text files
++    on data sets and the functions without a ccsid parameter; a single text
++    file gets its own with the name suffix ",ccsid=NNN" or SetTextCcsid.
++    Supported: 1047, 37, 273, 277, 278, 280, 284, 285, 297, 500, 871 and the
++    euro variants 1140-1149 (euro sign at X'A4' on the ISO-8859-1 side).
++    Tables: runtime/zosccsid.h of zos-pascal-llvm (scripts/gen-ccsid.py).
+ 
+     See the file COPYING.FPC, included in this distribution,
+     for details about the copyright.
+@@ -26,11 +34,37 @@ function AsciiToEbcdic(const s: RawByteString): RawByteString;
+ procedure EbcdicToAsciiBuf(var buf; len: SizeInt);
+ procedure AsciiToEbcdicBuf(var buf; len: SizeInt);
+ 
++{ the same with a given CCSID; the string versions stop with runtime error 201
++  (ERangeError with sysutils) for an unsupported CCSID, the buffer versions
++  return false }
++function EbcdicToAscii(const s: RawByteString; ccsid: longint): RawByteString;
++function AsciiToEbcdic(const s: RawByteString; ccsid: longint): RawByteString;
++function EbcdicToAsciiBuf(var buf; len: SizeInt; ccsid: longint): boolean;
++function AsciiToEbcdicBuf(var buf; len: SizeInt; ccsid: longint): boolean;
++
++{ CCSID for data sets opened afterwards and for the functions without a ccsid
++  parameter; false: not supported (the setting stays) }
++function SetDefaultCcsid(ccsid: longint): boolean;
++function GetDefaultCcsid: longint;
++function CcsidSupported(ccsid: longint): boolean;
++{ CCSID of a text file on a data set, directly after Reset/Rewrite/Append and
++  before the first read or write; false: no data set or CCSID not supported }
++function SetTextCcsid(var t: Text; ccsid: longint): boolean;
++{ CCSID of a text file on a data set, -1 for other files }
++function GetTextCcsid(var t: Text): longint;
++
+ implementation
+ 
+ { runtime/zosdsn.c }
+ procedure zos_e2a(p: pointer; n: int64); cdecl; external name 'FPC_ZOS_E2A';
+ procedure zos_a2e(p: pointer; n: int64); cdecl; external name 'FPC_ZOS_A2E';
++function zos_e2a_ccsid(p: pointer; n: int64; ccsid: longint): longint; cdecl; external name 'FPC_ZOS_E2A_CCSID';
++function zos_a2e_ccsid(p: pointer; n: int64; ccsid: longint): longint; cdecl; external name 'FPC_ZOS_A2E_CCSID';
++function zos_ccsid_set_default(ccsid: longint): longint; cdecl; external name 'FPC_ZOS_CCSID_SET_DEFAULT';
++function zos_ccsid_default: longint; cdecl; external name 'FPC_ZOS_CCSID_DEFAULT';
++function zos_ccsid_supported(ccsid: longint): longint; cdecl; external name 'FPC_ZOS_CCSID_SUPPORTED';
++function zos_dsn_set_ccsid(h, ccsid: longint): longint; cdecl; external name 'FPC_ZOS_DSN_SET_CCSID';
++function zos_dsn_get_ccsid(h: longint): longint; cdecl; external name 'FPC_ZOS_DSN_GET_CCSID';
+ 
+ function EbcdicToAscii(const s: RawByteString): RawByteString;
+ begin
+@@ -58,4 +92,59 @@ procedure AsciiToEbcdicBuf(var buf; len: SizeInt);
+   zos_a2e(@buf,len);
+ end;
+ 
++function EbcdicToAscii(const s: RawByteString; ccsid: longint): RawByteString;
++begin
++  if not CcsidSupported(ccsid) then
++    RunError(201);
++  result:=s;
++  UniqueString(result);
++  if length(result)>0 then
++    zos_e2a_ccsid(@result[1],length(result),ccsid);
++end;
++
++function AsciiToEbcdic(const s: RawByteString; ccsid: longint): RawByteString;
++begin
++  if not CcsidSupported(ccsid) then
++    RunError(201);
++  result:=s;
++  UniqueString(result);
++  if length(result)>0 then
++    zos_a2e_ccsid(@result[1],length(result),ccsid);
++end;
++
++function EbcdicToAsciiBuf(var buf; len: SizeInt; ccsid: longint): boolean;
++begin
++  result:=zos_e2a_ccsid(@buf,len,ccsid)=0;
++end;
++
++function AsciiToEbcdicBuf(var buf; len: SizeInt; ccsid: longint): boolean;
++begin
++  result:=zos_a2e_ccsid(@buf,len,ccsid)=0;
++end;
++
++function SetDefaultCcsid(ccsid: longint): boolean;
++begin
++  result:=zos_ccsid_set_default(ccsid)=0;
++end;
++
++function GetDefaultCcsid: longint;
++begin
++  result:=zos_ccsid_default;
++end;
++
++function CcsidSupported(ccsid: longint): boolean;
++begin
++  result:=zos_ccsid_supported(ccsid)<>0;
++end;
++
++function SetTextCcsid(var t: Text; ccsid: longint): boolean;
++begin
++  result:=zos_dsn_set_ccsid(TextRec(t).Handle,ccsid)=0;
++end;
++
++function GetTextCcsid(var t: Text): longint;
++begin
++  result:=zos_dsn_get_ccsid(TextRec(t).Handle);
++end;
++
+ end.
+-- 
+2.43.0
+

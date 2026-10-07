@@ -33,7 +33,7 @@ P=$FPCSRC/packages
 LOG=${LOG:-$HOME/build-packages.log}
 PKGS=${*:-"rtl-extra pthreads rtl-generics hash paszlib fcl-base fcl-json fcl-xml fcl-process
   fcl-registry fcl-fpcunit fcl-passrc fcl-stl fcl-res fcl-async fcl-net fcl-extra
-  fcl-hash fastcgi fcl-db/src/dbase fcl-db/src/base fcl-db/src/sqldb
+  fcl-hash fastcgi fcl-db/src/dbase fcl-db/src/base fcl-db/src/sqldb odbc fcl-db/src/sqldb/odbc
   fcl-web/src/base fcl-web/src/jsonrpc fcl-web/src/jwt fcl-web/src/websocket
   fcl-web/src/restbridge"}
 # Einträge mit /src/ sind einzelne Quellverzeichnisse eines Packages (fcl-web)
@@ -64,7 +64,8 @@ if [ "$ZFPC_DOTTED" = 1 ]; then
 fi
 # rtl/zos: pthread.inc für die Unit pthreads
 if [ "$TARGET" = zos ]; then
-  PPC="$PREFIX/bin/ppcs390x -Tzos -Clv17.0 -n -FD$PREFIX/bin -FU$U -Fu$U $SP -Fi$FPCSRC/rtl/zos $ZFPC_OPT"
+  # rtl/ des Repos: zosdb2cli_zos.inc (Db2-ODBC-Typen) für odbcsql (FPC-Patch 0045)
+  PPC="$PREFIX/bin/ppcs390x -Tzos -Clv17.0 -n -FD$PREFIX/bin -FU$U -Fu$U $SP -Fi$FPCSRC/rtl/zos -Fi$REPO/rtl $ZFPC_OPT"
 else
   # mit Debug-Informationen (gdb); rtl/linux: pthread.inc für die Unit pthreads
   PPC="$HOSTFPC/bin/ppcx64 -n -g -gw3 -FU$U -Fu$U -Fu$HOSTFPC/units/rtl -Fu$HOSTFPC/units/rtlobjpas $SP -Fi$FPCSRC/rtl/linux -Fi$FPCSRC/rtl/unix $ZFPC_OPT"
@@ -108,6 +109,8 @@ for p in $LOOP; do
 done
 echo "Units übersetzt: $ok"
 echo "gescheitert:$failed" | fold -w 100
+# ZFPC_PKG_FAILED=datei: Liste der gescheiterten Units (eine je Zeile, CI-Vergleich)
+[ -z "$ZFPC_PKG_FAILED" ] || printf '%s\n' $failed | sort > "$ZFPC_PKG_FAILED"
 
 T=$(mktemp -d)
 {

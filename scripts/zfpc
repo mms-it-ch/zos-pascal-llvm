@@ -9,12 +9,26 @@
 # System.Generics.Collections, ...; Satz units/zos-ns, gebaut mit ZFPC_DOTTED=1 build-rtl.sh).
 # Standard-Namensräume System, System.Console, UnixApi, TP und Data: auch "uses SysUtils,
 # Classes, Crt, Dos" findet die Units; weitere mit -FN<namensraum>.
+# --db2 (oder ZOS_DB2=1): gegen Db2 ODBC/CLI binden (Unit zosdb2cli; zos-ld nimmt das
+# Sidedeck ZOS_DB2HLQ.SDSNMACS(DSNAO64C) dazu, das Start-Skript setzt STEPLIB und DSNAOINI
+# aus ZOS_DB2_STEPLIB und ZOS_DB2_INI in .zos.env; pf8/README.md).
+# --version: Version des Ports (VERSION im Repo, -iZ des Compilers) und von FPC.
 # Umgebung: ZFPC_PREFIX (Standard ~/opt/zfpc), siehe scripts/build-rtl.sh.
 PREFIX=${ZFPC_PREFIX:-$HOME/opt/zfpc}
+if [ "$1" = --version ]; then
+  R=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+  echo "zfpc (zos-pascal-llvm) $(cat "$R/VERSION")"
+  echo "Compiler: z/OS-Port $("$PREFIX/bin/ppcs390x" -iZ), Free Pascal $("$PREFIX/bin/ppcs390x" -iW)"
+  exit 0
+fi
 NS=${ZFPC_NS:-0}
 for a in "$@"; do
   shift
-  if [ "$a" = --ns ]; then NS=1; else set -- "$@" "$a"; fi
+  case "$a" in
+    --ns) NS=1 ;;
+    --db2) export ZOS_DB2=1 ;;
+    *) set -- "$@" "$a" ;;
+  esac
 done
 if [ "$NS" = 1 ]; then
   exec "$PREFIX/bin/ppcs390x" -Tzos -Clv17.0 -n -FD"$PREFIX/bin" -Fu"$PREFIX/units/zos-ns" \

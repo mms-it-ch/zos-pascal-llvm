@@ -16,8 +16,9 @@ LLVM=1, x86_64) und die geänderten Units. Jeder Patch passt allein auf `main`.
 | `03-generated-code.md` | Intern erzeugter Code: Interface-Wrapper, Call-through | 0003 | x86_64-linux LLVM: tw9306a/b, tw39736 übersetzen nicht → laufen |
 | `04-bigendian.md` | Big-Endian: bitgepackte Int64-Konstanten, fmtbcd Int128, SetToArray | 0004 (Teil), 0005, 0006 | s390x (z/OS): tw36156, test/units/fmtbcd, trtti24 |
 | `05-process-exitcode.md` | fcl-process: `ExitCode` nach `WaitOnExit` immer 0 | 0007 | x86_64-linux, normaler Codegenerator: 0 → 3 |
+| `06-odbc-sqlinteger.md` | odbc: `SQLINTEGER = clong` ist auf 64-Bit-Unix 8 statt 4 Byte (06.10.2026) | 0008 (gegen 37b8a1a9) | x86_64-linux, unixODBC + SQLite: native error -4294967295 → 1 |
 
-Reproduzierer: `repro/` (`weakext.pp`, `exitcode.pp`, `run-x64.sh` für den LLVM-Codegenerator auf
+Reproduzierer: `repro/` (`weakext.pp`, `exitcode.pp`, `sqlint.pp`, `run-x64.sh` für den LLVM-Codegenerator auf
 x86_64). Die übrigen Nachweise sind Tests der FPC-Testsuite.
 
 Nicht gemeldet (im Port behoben, aber nicht allgemein nachgestellt): safecall-Ergebnis und

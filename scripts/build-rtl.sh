@@ -7,6 +7,11 @@
 # Ergebnis:
 #   $PREFIX/bin/ppcs390x, $PREFIX/bin/clang (-> zos-irc, llc), $PREFIX/bin/zos-ld
 #   $PREFIX/units/zos/*.ppu, *.o (GOFF), zosmap.txt
+#
+# ZFPC_CI=1 (GitHub Actions, ohne z/OS-Header und ohne den eigenen clang): die
+# C-Laufzeit (runtime/*.c) und zosmap.txt entfallen (leere Tabelle: C-Namen bleiben
+# ungemappt), es wird nur geprüft, dass sich Compiler, RTL und Packages übersetzen
+# lassen; LLVM-IR -> Objekt mit dem llc aus ZOS_LLVM_BIN (auch ein Distributions-llc).
 set -e
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 FPCSRC=${FPCSRC:-$HOME/src/fpc}
@@ -36,7 +41,11 @@ fi
 cp "$FPCSRC/compiler/ppcs390x" "$PREFIX/bin/"
 ln -sf "$REPO/scripts/zos-irc" "$PREFIX/bin/clang"
 ln -sf "$REPO/scripts/zos-ld" "$PREFIX/bin/zos-ld"
-python3 "$REPO/scripts/gen-zosmap.py" > "$U/zosmap.txt"
+if [ "$ZFPC_CI" = 1 ]; then
+  : > "$U/zosmap.txt"
+else
+  python3 "$REPO/scripts/gen-zosmap.py" > "$U/zosmap.txt"
+fi
 
 RO=$FPCSRC/packages/rtl-objpas/src/inc
 RC=$FPCSRC/packages/rtl-console/src
@@ -46,7 +55,8 @@ PPC="$PREFIX/bin/ppcs390x -Tzos -Clv17.0 -n -FD$PREFIX/bin -FU$U -Fu$U -dFPC_USE
 rm -f "$U"/*.ppu "$U"/*.o.tmp
 
 # C-Laufzeit des Ports (Unwind-Schnittstelle, atomare Operationen)
-for f in zosunwind zosatomic zoscompat zosfpu zossig zosdsn zoslines0 zosdbg; do
+[ "$ZFPC_CI" = 1 ] ||
+for f in zosunwind zosatomic zoscompat zosfpu zossig zosdsn zoslines0 zosdbg zosc31; do
   "$CLANG" --target=s390x-ibm-zos -O2 -trigraphs -mzos-sys-include="${ZOS_INCLUDE:-$HOME/zos/include}" \
     -D__CHARSET_LIB=1 -D_ALL_SOURCE -D_UNIX03_SOURCE -D_UNIX03_THREADS \
     -c "$REPO/runtime/$f.c" -o "$U/$f.o"
@@ -80,6 +90,9 @@ if [ "$ZFPC_DOTTED" = 1 ]; then
          $NO/System.StrUtils.pp $NO/System.DateUtils.pp $NO/System.Variants.pp $NO/System.VarUtils.pp
          $NO/Data.FMTBcd.pp $NO/System.Rtti.pp $NO/System.Nullable.pp $NO/System.Tuples.pp"
 fi
+# Units des Ports aus diesem Repository (rtl/): CCSID-Tabellen, Dezimalzahlen
+UNITS="$UNITS $REPO/rtl/zosccsid.pp $REPO/rtl/zosdecimal.pp $REPO/rtl/zosdecimalbcd.pp
+       $REPO/rtl/zoscobol.pp $REPO/rtl/zosdb2cli.pp $REPO/rtl/zoscall31.pp"
 for u in $UNITS; do
   case "$u" in /*) src=$u ;; *) src=$R/$u ;; esac
   $PPC -Sg "$src" || FAILED="$FAILED $(basename "$src")"

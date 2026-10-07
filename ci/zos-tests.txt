@@ -1,0 +1,14 @@
+# Testprogramme für den z/OS-Job der CI (scripts/ci-zos.sh): Pfad [Argumente]
+# Erwartet: Returncode 0 (die Programme geben die Zahl der Fehler als Returncode zurück).
+# C-Objekte neben dem Programm (<name>_c.c) übersetzt ci-zos.sh mit ZOS_CLANG.
+pf1/pf1test.pas
+pf2/exctest.pas
+pf2/objtest.pas
+pf3/fputest.pas
+pf3/sigexc.pas
+pf3/thrtest.pas
+pf5/abi.pas
+pf7/pkgtest.pas
+pf8/dectest.pas
+pf8/ccsidtest.pas
+pf8/cobtest.pas
