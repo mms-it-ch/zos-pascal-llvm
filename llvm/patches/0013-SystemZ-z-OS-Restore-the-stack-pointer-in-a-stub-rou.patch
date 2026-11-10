@@ -1,0 +1,318 @@
+From 6d086c26b0cc3b79eb7353f75d3da4b7619404b5 Mon Sep 17 00:00:00 2001
+From: mms-it-ch <info@mms-it.ch>
+Date: Tue, 10 Nov 2026 18:05:23 +0100
+Subject: [PATCH] [SystemZ][z/OS] Restore the stack pointer in a stub routine
+
+Reviewed version of llvm/llvm-project#228376 (4faf2e47ec), ported to this
+tree (z/OS AsmPrinter code in SystemZAsmPrinter.cpp). The copy of the frame
+header on stack restore is only correct if no signal is delivered while the
+stack pointer is changed and the header is copied. Language Environment
+delays signals while a stub routine runs, so this is done in a stub: stub
+entry marker (8 bytes of padding before it), no PPA1, no save area; called
+with LARL 3 / BASR 3,3 with the new stack pointer in R1; 4 MVC of 32 bytes
+from the highest block down, LGR 4,1, B 2(3). The stub is emitted once per
+module at the start of the code section if the module uses
+llvm.stackrestore.
+
+Assisted-by: Claude Code (Anthropic)
+---
+ llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp | 73 ++++++++++++++++++-
+ llvm/lib/Target/SystemZ/SystemZAsmPrinter.h   |  4 +
+ .../Target/SystemZ/SystemZISelLowering.cpp    | 36 ++++-----
+ llvm/lib/Target/SystemZ/SystemZInstrInfo.td   | 10 +++
+ llvm/lib/Target/SystemZ/SystemZOperators.td   |  7 ++
+ llvm/test/CodeGen/SystemZ/zos-stackrestore.ll | 63 +++++++++++-----
+ 6 files changed, 152 insertions(+), 41 deletions(-)
+ mode change 100644 => 100755 llvm/test/CodeGen/SystemZ/zos-stackrestore.ll
+
+diff --git a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
+index cd78ca5458..fc1849b995 100644
+--- a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
++++ b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.cpp
+@@ -25,6 +25,7 @@
+ #include "llvm/CodeGen/MachineModuleInfoImpls.h"
+ #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
+ #include "llvm/IR/GlobalVariable.h"
++#include "llvm/IR/Intrinsics.h"
+ #include "llvm/IR/Mangler.h"
+ #include "llvm/IR/Module.h"
+ #include "llvm/MC/MCDirectives.h"
+@@ -368,6 +369,20 @@ void SystemZAsmPrinter::emitInstruction(const MachineInstr *MI) {
+     emitCallInformation(CallType::BASR76);
+     return;
+ 
++  case SystemZ::XPLINK_STACKRESTORE: {
++    if (!StackRestoreStub)
++      report_fatal_error("stack restore without llvm.stackrestore in module");
++    EmitToStreamer(*OutStreamer, MCInstBuilder(SystemZ::LARL)
++                                     .addReg(SystemZ::R3D)
++                                     .addExpr(MCSymbolRefExpr::create(
++                                         StackRestoreStub, OutContext)));
++    EmitToStreamer(
++        *OutStreamer,
++        MCInstBuilder(SystemZ::BASR).addReg(SystemZ::R3D).addReg(SystemZ::R3D));
++    emitCallInformation(CallType::BASR33);
++    return;
++  }
++
+   case SystemZ::CallBASR_STACKEXT:
+     EmitToStreamer(*OutStreamer, MCInstBuilder(SystemZ::BASR)
+                                      .addReg(SystemZ::R3D)
+@@ -1715,11 +1730,67 @@ void SystemZAsmPrinter::calculatePPA1() {
+ }
+ 
+ void SystemZAsmPrinter::emitStartOfAsmFile(Module &M) {
+-  if (TM.getTargetTriple().isOSzOS())
++  if (TM.getTargetTriple().isOSzOS()) {
+     emitPPA2(M);
++    // The stack restore stub is emitted at the start of the file, because the
++    // text section may already be closed at the end (e.g. after emitting the
++    // DWARF aranges). It is needed by every function that uses
++    // llvm.stackrestore.
++    for (const Function &F : M)
++      if (F.getIntrinsicID() == Intrinsic::stackrestore && !F.use_empty()) {
++        emitStackRestoreStub();
++        break;
++      }
++  }
+   AsmPrinter::emitStartOfAsmFile(M);
+ }
+ 
++// Emit the stack restore stub. A stack restore must copy the frame header
++// (which @@ALCAXP moved down with the stack pointer) to the restored stack
++// pointer, and no signal may be delivered while the stack pointer is changed
++// and the header is copied. Language Environment delays signals while a stub
++// runs, so this is done in a stub routine: it has a stub entry marker
++// (preceded by 8 bytes of padding, so that the entry is 16 bytes after the
++// start, like for a normal routine), no PPA1 and no save area. Like the stack
++// extension routine, it is called with BASR 3,3 and returns with B 2(3). It
++// gets the new stack pointer in R1. The new stack pointer is never below the
++// current one, and both are multiples of 32 apart (0 if no storage was
++// allocated), so copying the header in blocks of 32 bytes from the highest
++// block down never overwrites a block that is still to be copied.
++void SystemZAsmPrinter::emitStackRestoreStub() {
++  const MCSubtargetInfo &STI = TM.getMCSubtargetInfo();
++  auto Emit = [&](const MCInst &Inst) {
++    OutStreamer->emitInstruction(Inst, STI);
++  };
++
++  OutStreamer->pushSection();
++  OutStreamer->switchSection(getObjFileLowering().getTextSection());
++  OutStreamer->emitValueToAlignment(Align(8));
++  OutStreamer->AddComment("XPLINK Stub Entry Padding");
++  OutStreamer->emitIntValue(0, 8);
++  OutStreamer->AddComment("XPLINK Stub Entry Marker");
++  OutStreamer->AddComment("Eyecatcher 0x00C300C500C500");
++  OutStreamer->emitIntValueInHex(0x00C300C500C500, 7);
++  OutStreamer->AddComment("Mark Type C'4'");
++  OutStreamer->emitInt8(0xF4);
++  StackRestoreStub = OutContext.createTempSymbol("stackrestore");
++  OutStreamer->emitLabel(StackRestoreStub);
++
++  SystemZXPLINK64Registers Regs;
++  const int Bias = Regs.getStackPointerBias();
++  const int Block = 32;
++  for (int Off = Regs.getCallFrameSize() - Block; Off >= 0; Off -= Block)
++    Emit(MCInstBuilder(SystemZ::MVC)
++             .addReg(SystemZ::R1D)
++             .addImm(Bias + Off)
++             .addImm(Block)
++             .addReg(SystemZ::R4D)
++             .addImm(Bias + Off));
++  Emit(MCInstBuilder(SystemZ::LGR).addReg(SystemZ::R4D).addReg(SystemZ::R1D));
++  Emit(MCInstBuilder(SystemZ::B).addReg(SystemZ::R3D).addImm(2).addReg(0));
++  OutStreamer->popSection();
++}
++
+ void SystemZAsmPrinter::emitPPA2(Module &M) {
+   auto *ZOS = static_cast<SystemZTargetzOSStreamer *>(getTargetStreamer());
+   OutStreamer->pushSection();
+diff --git a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.h b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.h
+index 9e854a54c1..44afa99265 100644
+--- a/llvm/lib/Target/SystemZ/SystemZAsmPrinter.h
++++ b/llvm/lib/Target/SystemZ/SystemZAsmPrinter.h
+@@ -101,6 +101,10 @@ private:
+   void emitADASection();
+   void emitIDRLSection(Module &M);
+   void emitCELQMAIN(const Function &MainFn);
++  void emitStackRestoreStub();
++
++  /// Entry of the stack restore stub, if the module uses llvm.stackrestore.
++  MCSymbol *StackRestoreStub = nullptr;
+ 
+ public:
+   SystemZAsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer)
+diff --git a/llvm/lib/Target/SystemZ/SystemZISelLowering.cpp b/llvm/lib/Target/SystemZ/SystemZISelLowering.cpp
+index 3fbccf6ba6..e26367d058 100644
+--- a/llvm/lib/Target/SystemZ/SystemZISelLowering.cpp
++++ b/llvm/lib/Target/SystemZ/SystemZISelLowering.cpp
+@@ -5411,30 +5411,20 @@ SDValue SystemZTargetLowering::lowerSTACKRESTORE(SDValue Op,
+   // XPLINK: @@ALCAXP (lowerDYNAMIC_STACKALLOC_XPLINK) moves the frame header
+   // (register save area and reserved words at SP + bias) down with the stack
+   // pointer, and calls made while the stack pointer is lowered place their
+-  // arguments over the old header. Copy the current header back to the
+-  // restored stack pointer, otherwise the epilogue and the LE stack walk use
+-  // a clobbered header (abend U4083). The restored stack pointer is never
+-  // below the current one, so copying from the highest word down is safe even
+-  // if the areas overlap.
++  // arguments over the old header. The current header must be copied back to
++  // the restored stack pointer, otherwise the epilogue and the LE stack walk
++  // use a clobbered header (abend U4083). No signal may be delivered while
++  // the stack pointer is changed and the header is copied, so this is done in
++  // a stub routine (emitted once per module by the AsmPrinter), which gets
++  // the new stack pointer in R1 and is called with BASR 3,3.
+   if (Subtarget.isTargetXPLINK64()) {
+-    auto &XRegs = Subtarget.getSpecialRegisters<SystemZXPLINK64Registers>();
+-    uint64_t Bias = XRegs.getStackPointerBias();
+-    SDValue OldSP = DAG.getCopyFromReg(
+-        Chain, DL, Regs->getStackPointerRegister(), MVT::i64);
+-    Chain = OldSP.getValue(1);
+-    for (int I = XRegs.getCallFrameSize() / 8 - 1; I >= 0; --I) {
+-      SDValue Offset = DAG.getConstant(Bias + 8 * I, DL, MVT::i64);
+-      SDValue Word = DAG.getLoad(
+-          MVT::i64, DL, Chain,
+-          DAG.getNode(ISD::ADD, DL, MVT::i64, OldSP, Offset),
+-          MachinePointerInfo());
+-      Chain = DAG.getStore(Word.getValue(1), DL, Word,
+-                           DAG.getNode(ISD::ADD, DL, MVT::i64, NewSP, Offset),
+-                           MachinePointerInfo());
+-    }
+-  }
+-
+-  Chain = DAG.getCopyToReg(Chain, DL, Regs->getStackPointerRegister(), NewSP);
++    SDValue Glue;
++    Chain = DAG.getCopyToReg(Chain, DL, SystemZ::R1D, NewSP, Glue);
++    Glue = Chain.getValue(1);
++    Chain = DAG.getNode(SystemZISD::XPLINK_STACKRESTORE, DL, MVT::Other, Chain,
++                        Glue);
++  } else
++    Chain = DAG.getCopyToReg(Chain, DL, Regs->getStackPointerRegister(), NewSP);
+ 
+   if (StoreBackchain)
+     Chain = DAG.getStore(Chain, DL, Backchain, getBackchainAddress(NewSP, DAG),
+diff --git a/llvm/lib/Target/SystemZ/SystemZInstrInfo.td b/llvm/lib/Target/SystemZ/SystemZInstrInfo.td
+index 9e896f80ce..3fc721d49e 100644
+--- a/llvm/lib/Target/SystemZ/SystemZInstrInfo.td
++++ b/llvm/lib/Target/SystemZ/SystemZInstrInfo.td
+@@ -53,6 +53,16 @@ let Defs = [R3D, CC], Uses = [R3D, R4D], hasNoSchedulingInfo = 1,
+     hasSideEffects = 1 in
+   def XPLINK_STACKALLOC : Pseudo<(outs), (ins), []>;
+ 
++// Call of the XPLINK stack restore stub (see SystemZAsmPrinter): the new
++// stack pointer is passed in R1, the stub sets R4. Like the stack extension
++// routine, the stub does not follow the XPLINK calling convention and is
++// called with BASR 3,3. Expands to LARL 3, BASR 3,3 and the call information
++// (10 bytes).
++let Predicates = [IsTargetXPLINK64], Defs = [R1D, R3D, R4D],
++    Uses = [R1D, R4D], hasNoSchedulingInfo = 1, hasSideEffects = 1 in
++  def XPLINK_STACKRESTORE : Alias<10, (outs), (ins),
++                                  [(z_xplink_stackrestore)]>;
++
+ //===----------------------------------------------------------------------===//
+ // Branch instructions
+ //===----------------------------------------------------------------------===//
+diff --git a/llvm/lib/Target/SystemZ/SystemZOperators.td b/llvm/lib/Target/SystemZ/SystemZOperators.td
+index b69f84d78a..b9ce399271 100644
+--- a/llvm/lib/Target/SystemZ/SystemZOperators.td
++++ b/llvm/lib/Target/SystemZ/SystemZOperators.td
+@@ -292,6 +292,13 @@ def z_tls_ldcall        : SDNode<"SystemZISD::TLS_LDCALL", SDT_ZCall,
+                                  [SDNPHasChain, SDNPInGlue, SDNPOutGlue,
+                                   SDNPVariadic]>;
+ 
++// XPLINK: restore the stack pointer to the value in R1 (glued in). Calls the
++// stack restore stub of the module, which copies the frame header and sets
++// R4 with signals delayed. Operand 0 is the chain operand.
++def z_xplink_stackrestore : SDNode<"SystemZISD::XPLINK_STACKRESTORE", SDTNone,
++                                   [SDNPHasChain, SDNPInGlue,
++                                    SDNPSideEffect]>;
++
+ // Wraps a TargetGlobalAddress that should be loaded using PC-relative
+ // accesses (LARL).  Operand 0 is the address.
+ def z_pcrel_wrapper     : SDNode<"SystemZISD::PCREL_WRAPPER", SDT_ZWrapPtr, []>;
+diff --git a/llvm/test/CodeGen/SystemZ/zos-stackrestore.ll b/llvm/test/CodeGen/SystemZ/zos-stackrestore.ll
+old mode 100644
+new mode 100755
+index 6603aa8c13..cb33fbbdcc
+--- a/llvm/test/CodeGen/SystemZ/zos-stackrestore.ll
++++ b/llvm/test/CodeGen/SystemZ/zos-stackrestore.ll
+@@ -1,27 +1,45 @@
+ ; RUN: llc < %s -mtriple=s390x-ibm-zos | FileCheck %s
++; RUN: llc < %s -mtriple=s390x-ibm-zos -filetype=obj -o /dev/null
+ ;
+ ; @@ALCAXP moves the frame header (save area at SP + 2048) down with the stack
+-; pointer. A stack restore must copy the current header back to the restored
+-; stack pointer before the frame is used again, from the highest word down.
++; pointer. A stack restore must copy the current header to the restored stack
++; pointer, and no signal may be delivered meanwhile. This is done in a stub
++; routine (stub entry marker, no PPA1), which is emitted once per module at the
++; start of the code section and gets the new stack pointer in R1.
+ 
+ declare void @use(ptr)
+ 
++; The stub copies the header in blocks of 32 bytes from the highest block down
++; and sets R4. It is called with BASR 3,3 and returns with B 2(3).
++; CHECK:      * XPLINK Stub Entry Padding
++; CHECK-NEXT:  DC XL8'0000000000000000'
++; CHECK-NEXT: * XPLINK Stub Entry Marker
++; CHECK-NEXT: * Eyecatcher 0x00C300C500C500
++; CHECK-NEXT:  DC XL7'00C300C500C500'
++; CHECK-NEXT: * Mark Type C'4'
++; CHECK-NEXT:  DC XL1'F4'
++; CHECK-NEXT: [[STUB:L#stackrestore[0-9]+]] DS 0H
++; CHECK-NEXT:  mvc 2144(32,1),2144(4)
++; CHECK-NEXT:  mvc 2112(32,1),2112(4)
++; CHECK-NEXT:  mvc 2080(32,1),2080(4)
++; CHECK-NEXT:  mvc 2048(32,1),2048(4)
++; CHECK-NEXT:  lgr 4,1
++; CHECK-NEXT:  b 2(3)
++; CHECK-NOT:  Stub Entry Marker
++
++; The stack restore calls the stub with the saved stack pointer in R1.
+ ; CHECK-LABEL: f DS 0H
+-; CHECK:      lgr 11,4
+-; CHECK:      basr 7,6
+-; CHECK:      la 1,2240(4)
+-; CHECK:      basr 7,6
+-; CHECK:      lg 0,2168(4)
+-; CHECK-NEXT: stg 0,2168(11)
+-; CHECK-NEXT: lg 0,2160(4)
+-; CHECK-NEXT: stg 0,2160(11)
+-; CHECK:      lg 0,2056(4)
+-; CHECK-NEXT: stg 0,2056(11)
+-; CHECK-NEXT: lg 0,2048(4)
+-; CHECK-NEXT: stg 0,2048(11)
+-; CHECK-NEXT: lgr 4,11
+-; CHECK:      basr 7,6
+-; CHECK:      lmg 4,11,2048(4)
++; CHECK:       nill 1,65504
++; CHECK-NEXT:  lgr [[SP:[0-9]+]],4
++; CHECK:       basr 7,6
++; CHECK:       la 1,2240(4)
++; CHECK:       basr 7,6
++; CHECK:       lgr 1,[[SP]]
++; CHECK-NEXT:  larl 3,[[STUB]]
++; CHECK-NEXT:  basr 3,3
++; CHECK-NEXT:  bcr 0,7
++; CHECK:       basr 7,6
++; CHECK:       lmg 4,11,2048(4)
+ define void @f(i64 %n) {
+   %sp = call ptr @llvm.stacksave.p0()
+   %p = alloca i8, i64 %n, align 8
+@@ -30,3 +48,14 @@ define void @f(i64 %n) {
+   call void @use(ptr null)
+   ret void
+ }
++
++; A second stack restore uses the same stub.
++; CHECK-LABEL: g DS 0H
++; CHECK:       larl 3,[[STUB]]
++define void @g(i64 %n) {
++  %sp = call ptr @llvm.stacksave.p0()
++  %p = alloca i8, i64 %n, align 8
++  call void @use(ptr %p)
++  call void @llvm.stackrestore.p0(ptr %sp)
++  ret void
++}
+-- 
+2.43.0
+
