@@ -23,6 +23,7 @@ Eigener Zweig `pascal-zos` (Worktree `~/src/llvm-pascal`) auf dem Zweig `zos-fix
 | 0011 | `lowerSTACKRESTORE` (XPLINK): `@@ALCAXP` (dynamisches alloca) senkt R4 und kopiert den Rahmenkopf (Sicherungsbereich R4+2048) mit; Aufrufe bei gesenktem R4 überschreiben den alten Kopf, stackrestore setzte nur R4 zurück -> Epilog/LE-Stackwalk lasen überschriebene Register (U4083 RSN 0F). Jetzt Kopf von SP+2048 an den wiederhergestellten SP+2048 kopieren; Test `zos-stackrestore.ll` | eigen (aus dem Fortran-Zweig übernommen, 02.10.2026) |
 | 0012 | Basis-Korrektur „read-only data in the code section only if local and without relocations“ (aus `zos-fixes`) auf den Review-Stand von llvm/llvm-project#226683: `getKindForGlobal` gibt unter GOFF für jeden Initialisierer mit Relocation `ReadOnlyWithRel`, Abschnittswahl und `isAddressedViaADA` prüfen nur die Linkage, `isReadOnlyInCodeSection` entfällt. Platzierung unverändert | eigen (Review-Stand des PRs, 06.10.2026) |
 | 0013 | Patch 0011 auf den Review-Stand von llvm/llvm-project#228376: Zurücksetzen des Stapelzeigers in einer Stub-Routine (Stub-Marker, kein PPA1, kein Sicherungsbereich), damit währenddessen keine Signale zugestellt werden; Aufruf `larl 3` / `basr 3,3` mit dem neuen SP in R1, Stub kopiert den Rahmenkopf mit 4 `MVC` zu 32 Byte, `lgr 4,1`, `b 2(3)`; einmal je Modul, nur bei `llvm.stackrestore`. Test `zos-stackrestore.ll` | eigen (Review-Stand des PRs, 10.11.2026) |
+| 0014 | Patch 0013 auf den Review-Stand von llvm/llvm-project#228376 (12.11.2026): Der erste Stack-Restore legt das Label an, der Stub folgt nach der letzten Funktion (`doFinalization`, vor dem Abschluss der Debug-Information; in `emitEndOfAsmFile` ist der Code-Abschnitt mit `--generate-arange-section` schon beendet). Backchain-Behandlung in `lowerSTACKRESTORE` nur noch für ELF. Neuer Test `zos-stackrestore-debug.ll` | eigen (Review-Stand des PRs, 12.11.2026) |
 
 Upstream gemeldet (27.09.2026): 0003 → #226804, 0004 → #226799, 0006 → #226800, 0008 → Kommentar zu PR #226682, 0010 → #226835 (PR #226840, Zweig `zos-extern-weak` im Fork, Review-Hilfe `llvm/pr/REVIEW-1.md`).
 0009 → Kommentar zu PR #225157 (28.09.2026): ohne Zwischenspeicher der Sektionen zerfällt auch C_@@SQINIT;
@@ -33,7 +34,7 @@ aus Initialisierern aufrufbar, aber für externe Funktionen nicht gleich der im 
 genommenen Adresse (C-Test: `void f(void){} void (*pf)(void)=f;` → `pf != f`).
 
 SystemZ- und GOFF-Lit-Tests (27.09.2026): 1281/1281 bestanden (mit 0009, 0010).
-Mit 0011 (02.10.2026): 1304 bestanden / 19 nicht unterstützt / 0 Fehler (mit 0012 am 06.10.2026 und 0013 am 10.11.2026 ebenso) (1323 Tests;
+Mit 0011 (02.10.2026): 1304 bestanden / 19 nicht unterstützt / 0 Fehler (mit 0012 am 06.10.2026 und 0013 am 10.11.2026 ebenso; mit 0014 am 12.11.2026: 1305 / 19 / 0, 1324 Tests) (1323 Tests;
 `fixups.s` braucht `llvm-readelf` im Build: `ninja llvm-readelf`).
 
 ## Schnell-Build (nur noch bei Bedarf)
